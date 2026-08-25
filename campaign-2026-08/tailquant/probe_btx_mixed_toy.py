@@ -55,9 +55,12 @@ def mem_available_bytes():
 
 avail = mem_available_bytes()
 if avail is None:
-    sys.exit("FAIL-CLOSED: cannot determine available memory")
+    print("FAIL-CLOSED: cannot determine available memory", file=sys.stderr)
+    sys.exit(1)
 if avail < MIN_FREE_BYTES:
-    sys.exit(f"FAIL-CLOSED: {avail / 2**30:.1f} GiB available < 8 GiB floor")
+    print(f"FAIL-CLOSED: {avail / 2**30:.1f} GiB available < 8 GiB floor",
+          file=sys.stderr)
+    sys.exit(1)
 print(f"[gate] mem available {avail / 2**30:.1f} GiB - proceeding")
 
 import torch  # noqa: E402

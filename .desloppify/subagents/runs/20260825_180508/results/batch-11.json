@@ -1,0 +1,223 @@
+{
+  "batch": "api_surface_coherence",
+  "batch_index": 11,
+  "assessments": {
+    "api_surface_coherence": 52.0
+  },
+  "dimension_notes": {
+    "api_surface_coherence": {
+      "evidence": [
+        "Production public functions carry very large positional signatures: sparse_attn_indexer() takes 17 positional + 5 keyword parameters (overlays/vllm/model_executor/layers/sparse_attn_indexer.py:788); its fake impl mirrors the same 22-parameter surface (line 1359).",
+        "BuildPrefillChunkMetadataKernel.__call__() exposes 13 positional tensors/scalars with no defaults (overlays/vllm/v1/attention/backends/mla/indexer.py:428), and build_prefill_chunk_metadata() takes 13 parameters with mixed CPU/GPU tensor pairs (line 1177).",
+        "Triton kernels are declared as class staticmethods with a separate dispatch() that builds a CompileKey from the same parameters passed again to __call__(); the redundancy is visible in BuildPrefillChunkMetadataKernel and PrepareUniformDecodeKernel.",
+        "Public entry points rely heavily on environment variables as runtime control: VLLM_USE_B12X_SPARSE_INDEXER, VLLM_DCP_GLOBAL_TOPK, VLLM_ONE_GPU_PER_NODE, VLLM_FUSED_DCP_GATHER, VLLM_BUILDA_BMM, KV_FP8_ROPE. These act as hidden API flags rather than explicit arguments.",
+        "Multiple modules expose both real and fake implementations of the same operator (sparse_attn_indexer / sparse_attn_indexer_fake, patched_fused_scaled_matmul_reduce_scatter / patched_fused_scaled_matmul_reduce_scatter_fake), requiring callers to know which variant to invoke.",
+        "The same DCP sharding parameters (dcp_rank, dcp_world_size, cp_kv_cache_interleave_size) are threaded through dozens of function signatures in indexer.py and sparse_attn_indexer.py, suggesting the sharding context is not encapsulated.",
+        "README and launcher docs describe deployment via shell arrays and environment variables; there is no stable Python API for launching or verifying an overlay set.",
+        "No public function has a docstring describing its error contract or return shape; complex functions use inline comments but not docstring contracts."
+      ],
+      "impact_scope": "subsystem",
+      "fix_scope": "architectural_change",
+      "confidence": "high"
+    }
+  },
+  "dimension_judgment": {
+    "api_surface_coherence": {
+      "dimension_character": "The codebase behaves more like a bag of production patches than a coherent library. Public overlay entry points expose huge, environment-variable-laden signatures; the same DCP sharding state is threaded manually through tens of functions; and real/fake operator variants force callers to understand implementation details. The API surface is coherent enough to boot a fleet, but not coherent enough for a new developer to use safely.",
+      "score_rationale": "A score of 52.0 reflects that the most important functions work and are documented in README/launcher terms, but their shapes violate almost every API-coherence heuristic: too many positional parameters, hidden env-var modes, duplicated real/fake entry points, and missing error/return contracts. Refactoring would require encapsulating DCP state and introducing explicit launch/verify APIs, which is architectural work."
+    }
+  },
+  "issues": [
+    {
+      "dimension": "api_surface_coherence",
+      "identifier": "mega_parameter_public_functions",
+      "summary": "Key public functions expose 10-22 positional parameters without encapsulation",
+      "related_files": [
+        "overlays/vllm/model_executor/layers/sparse_attn_indexer.py",
+        "overlays/vllm/v1/attention/backends/mla/indexer.py",
+        "overlays/vllm/distributed/parallel_state.py"
+      ],
+      "evidence": [
+        "sparse_attn_indexer() at line 788 has 17 positional + 5 keyword parameters; sparse_attn_indexer_fake() at line 1359 duplicates the same 22-parameter surface.",
+        "BuildPrefillChunkMetadataKernel.__call__() at line 428 takes 13 positional arguments, 10 of which are tensors/scalars that must be passed in a fixed order.",
+        "build_prefill_chunk_metadata() at line 1177 takes 13 parameters including both device and CPU copies of the same tensors (query_start_loc and query_start_loc_cpu, compressed_seq_lens and compressed_seq_lens_cpu).",
+        "patched_fused_scaled_matmul_reduce_scatter() at line 321 exposes 13 parameters with 4 defaults."
+      ],
+      "suggestion": "Introduce small dataclasses/structs for repeated cross-cutting context (DCP sharding, attention metadata, CPU/GPU tensor pairs) and replace long positional lists with a primary tensor/metadata object plus a few explicit keyword arguments. This would also make the fake and real implementations share a validation layer.",
+      "confidence": "high",
+      "impact_scope": "subsystem",
+      "fix_scope": "architectural_change",
+      "root_cause_cluster": "data_clumps"
+    },
+    {
+      "dimension": "api_surface_coherence",
+      "identifier": "env_var_api_overloading",
+      "summary": "Public behavior is controlled by environment variables rather than explicit API arguments",
+      "related_files": [
+        "overlays/vllm/model_executor/layers/sparse_attn_indexer.py",
+        "overlays/vllm/distributed/parallel_state.py",
+        "overlays/vllm/v1/attention/backends/mla/indexer.py",
+        "launch/launch_gx10.sh"
+      ],
+      "evidence": [
+        "_USE_B12X_SPARSE_INDEXER reads VLLM_USE_B12X_SPARSE_INDEXER inside sparse_attn_indexer.py instead of receiving an explicit flag.",
+        "VLLM_DCP_GLOBAL_TOPK is read inside build_prefill_chunk_metadata() (line 1199) to decide whether to keep an empty DCP chunk.",
+        "VLLM_ONE_GPU_PER_NODE gates the gloo in-the-same-node probe in parallel_state.py.",
+        "launch_gx10.sh sets 25+ environment variables that collectively form the runtime API of the overlay stack."
+      ],
+      "suggestion": "Promote the most important runtime toggles into explicit constructor/config arguments (e.g., a B12xSparseConfig dataclass, a ParallelTopologyConfig) so callers can see the full API surface in code and type checkers can validate it.",
+      "confidence": "high",
+      "impact_scope": "subsystem",
+      "fix_scope": "architectural_change",
+      "root_cause_cluster": "implicit_configuration"
+    },
+    {
+      "dimension": "api_surface_coherence",
+      "identifier": "real_and_fake_impls_exposed_separately",
+      "summary": "Operators expose both real and fake implementations as separate public functions",
+      "related_files": [
+        "overlays/vllm/model_executor/layers/sparse_attn_indexer.py",
+        "overlays/vllm/distributed/parallel_state.py",
+        "kernels/nvfp4_ds_mla_writer.py"
+      ],
+      "evidence": [
+        "sparse_attn_indexer() and sparse_attn_indexer_fake() are both decorated as public torch.library implementations and both carry 22 parameters.",
+        "patched_fused_scaled_matmul_reduce_scatter() and patched_fused_scaled_matmul_reduce_scatter_fake() share the same 13-parameter signature in parallel_state.py.",
+        "nvfp4_ds_mla_write() is registered with a fake impl inside the same module, but the boundary between fake (meta) and real is governed by torch.library conventions rather than an explicit API contract."
+      ],
+      "suggestion": "Hide the fake implementations as private helpers or generate them from a single schema definition. The public surface should be one function per logical operation; the library registration can point to private meta/real kernels.",
+      "confidence": "medium",
+      "impact_scope": "module",
+      "fix_scope": "multi_file_refactor",
+      "root_cause_cluster": "duplicated_api_surface"
+    },
+    {
+      "dimension": "api_surface_coherence",
+      "identifier": "dcp_context_threaded_manually",
+      "summary": "DCP rank/world/interleave parameters are repeated across many signatures instead of encapsulated",
+      "related_files": [
+        "overlays/vllm/v1/attention/backends/mla/indexer.py",
+        "overlays/vllm/model_executor/layers/sparse_attn_indexer.py",
+        "overlays/vllm/model_executor/layers/attention/mla_attention.py"
+      ],
+      "evidence": [
+        "build_prefill_chunk_metadata(), BuildPrefillChunkMetadataKernel, PrepareUniformDecodeKernel, sparse_attn_indexer(), and mla_attention forward paths all take dcp_rank, dcp_world_size, and cp_kv_cache_interleave_size as separate parameters.",
+        "The same three values are extracted from vllm_config.parallel_config in multiple places, then passed downward through 5-10 call frames."
+      ],
+      "suggestion": "Create a DcpShardingContext dataclass carrying rank, world_size, and interleave_size, and pass it as a single object. This removes parameter duplication and makes it impossible for callers to mix up the order of rank vs. world_size.",
+      "confidence": "high",
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor",
+      "root_cause_cluster": "data_clumps"
+    },
+    {
+      "dimension": "api_surface_coherence",
+      "identifier": "missing_error_and_return_contracts",
+      "summary": "Complex public functions lack docstrings describing errors, invariants, and return shapes",
+      "related_files": [
+        "overlays/vllm/model_executor/layers/sparse_attn_indexer.py",
+        "overlays/vllm/v1/attention/backends/mla/indexer.py",
+        "benchmarks/correctness_probe.py",
+        "benchmarks/midctx_probe.py"
+      ],
+      "evidence": [
+        "sparse_attn_indexer() and build_prefill_chunk_metadata() have no docstrings; invariants are embedded as inline comments.",
+        "Correctness and midctx probes expose functions like run() and main() without documenting what exceptions they raise or what files they write.",
+        "Multiple functions return None in edge cases (build_prefill_chunk_metadata returning None for empty chunks) without documenting when or why callers must handle it."
+      ],
+      "suggestion": "Add docstrings to every public overlay entry point and probe function stating: argument semantics, return shape/type, when None is returned, and which RuntimeError/AssertionError conditions callers should expect.",
+      "confidence": "medium",
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor",
+      "root_cause_cluster": "missing_contracts"
+    },
+    {
+      "dimension": "api_surface_coherence",
+      "identifier": "inconsistent_collective_and_backend_naming",
+      "summary": "parallel_state exposes similar collective helpers with inconsistent parameter naming and ordering",
+      "related_files": [
+        "overlays/vllm/distributed/parallel_state.py",
+        "overlays/vllm/distributed/device_communicators/shm_broadcast.py"
+      ],
+      "evidence": [
+        "Module-level reduce_scatter (line 165) and all_gather (line 183) name the tensor argument 'tensor' and include group_name/world_size parameters; the GroupCoordinator class methods (lines 723, 692) name it 'input_' and omit those parameters.",
+        "Top-level graph_capture (line 1456) takes a device argument first; the class method (line 620) does not.",
+        "broadcast_object in shm_broadcast.py takes only (obj), while parallel_state.broadcast_object takes (obj, src)."
+      ],
+      "suggestion": "Pick one naming convention for the core tensor argument and one ordering for optional group/device parameters, then deprecate the mismatched variants. Add thin compatibility wrappers only where external callers still need them.",
+      "confidence": "medium",
+      "impact_scope": "module",
+      "fix_scope": "multi_file_refactor",
+      "root_cause_cluster": "naming_drift"
+    },
+    {
+      "dimension": "api_surface_coherence",
+      "identifier": "overloaded_public_dispatch_on_argument_type",
+      "summary": "Several public functions branch behavior based on argument type rather than exposing separate named operations",
+      "related_files": [
+        "overlays/vllm/model_executor/model_loader/weight_utils.py",
+        "overlays/vllm/distributed/parallel_state.py",
+        "overlays/vllm/model_executor/layers/attention/mla_attention.py"
+      ],
+      "evidence": [
+        "download_weights_from_hf (weight_utils.py:432) branches on allow_patterns being str vs list[str].",
+        "broadcast_tensor_dict (parallel_state.py:886) and irecv_tensor_dict (parallel_state.py:1115) dispatch on whether value is a tensor, list, dict, or nested structure.",
+        "mla_attention.forward (mla_attention.py:619) and forward_impl (mla_attention.py:705) branch on attn_metadata_raw / mqa_q types to choose dense vs sparse paths."
+      ],
+      "suggestion": "Either split overloaded functions into focused entry points (download_weights_with_single_pattern vs download_weights_with_patterns) or document the accepted type unions and the semantics for each branch in the function contract.",
+      "confidence": "medium",
+      "impact_scope": "module",
+      "fix_scope": "multi_file_refactor",
+      "root_cause_cluster": "type_overload"
+    }
+  ],
+  "retrospective": {
+    "root_causes": [
+      "The codebase is a source-form overlay on top of stock vLLM, so its public API is constrained by the vLLM call sites it patches. Functions must match vLLM signatures, which already pass many positional arguments.",
+      "The fastest path to production was to add environment-variable gates where vLLM did not expose configuration hooks, so runtime behavior became implicit rather than explicit.",
+      "Torch library registration requires separate fake and real kernels, but the project did not abstract the registration boilerplate, so both variants are visible."
+    ],
+    "likely_symptoms": [
+      "mega_parameter_public_functions",
+      "env_var_api_overloading",
+      "dcp_context_threaded_manually",
+      "missing_error_and_return_contracts",
+      "inconsistent_collective_and_backend_naming",
+      "overloaded_public_dispatch_on_argument_type"
+    ],
+    "possible_false_positives": [
+      "Triton JIT kernels naturally need many raw pointer/stride arguments; this is framework-imposed and not an API-coherence defect.",
+      "Some long parameter lists in benchmark/launcher scripts are shell argv conventions, not Python API surface."
+    ]
+  },
+  "context_updates": {
+    "api_surface_coherence": {
+      "add": [
+        {
+          "header": "Overlay APIs are shaped by vLLM hook points",
+          "description": "Most long signatures exist because the overlay must drop into existing vLLM call sites. That is a legitimate constraint, but it does not excuse the lack of internal encapsulation for DCP state and CPU/GPU tensor pairs.",
+          "settled": true,
+          "positive": false
+        },
+        {
+          "header": "Environment variables act as hidden API flags",
+          "description": "VLLM_USE_B12X_SPARSE_INDEXER, VLLM_DCP_GLOBAL_TOPK, VLLM_ONE_GPU_PER_NODE and many others are read deep inside implementation files. This makes the runtime behavior impossible to discover from function signatures alone.",
+          "settled": true,
+          "positive": false
+        },
+        {
+          "header": "Real/fake operator pairs duplicate the same surface",
+          "description": "torch.library registration requires a meta/fake implementation, but the project exposes both as public-looking functions instead of hiding the fake variant behind a private helper. This doubles the apparent API surface.",
+          "settled": true,
+          "positive": false
+        },
+        {
+          "header": "Kernel entry points are type-annotated and predictable",
+          "description": "Triton kernels and their host wrappers use explicit type hints (torch.Tensor, int, slice) and keyword-only boundaries where appropriate. The parameter shapes are complex but not chaotic.",
+          "settled": true,
+          "positive": true
+        }
+      ]
+    }
+  }
+}

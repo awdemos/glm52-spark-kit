@@ -175,7 +175,7 @@ def write_to_kv_cache_fused(
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, "/w")
-    from nvfp4_ds_mla_writer import pack_records, write_to_kv_cache, unpack_records
+    from nvfp4_ds_mla_writer import write_to_kv_cache
     dev = torch.device("cuda")
     torch.manual_seed(0)
     for n in (1, 7, 64, 1024):

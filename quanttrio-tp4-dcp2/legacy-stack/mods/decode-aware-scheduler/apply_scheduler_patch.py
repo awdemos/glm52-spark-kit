@@ -8,7 +8,6 @@ not present in the original patch baseline.
 
 Idempotent: detects already-applied changes and exits cleanly.
 """
-import re
 import sys
 
 FILE_PATH = "/usr/local/lib/python3.12/dist-packages/vllm/v1/core/sched/scheduler.py"

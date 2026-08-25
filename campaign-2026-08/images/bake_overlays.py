@@ -25,7 +25,8 @@ for f in m["files"]:
     src = os.path.join(kit, "overlays", f["overlay_file"])
     dst = os.path.join(sp, f["site_packages_target"])
     if not os.path.exists(src):
-        sys.exit(f"missing overlay file: {src}")
+        print(f"missing overlay file: {src}", file=sys.stderr)
+        sys.exit(1)
     if not skip_md5:
         h = hashlib.md5(open(src, "rb").read()).hexdigest()
         # HEAD files intentionally ahead of MANIFEST md5s (flag-gated fused-gather

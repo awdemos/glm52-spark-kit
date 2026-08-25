@@ -1,0 +1,192 @@
+{
+  "batch": "mid_level_elegance",
+  "batch_index": 9,
+  "assessments": {
+    "mid_level_elegance": 62.0
+  },
+  "dimension_notes": {
+    "mid_level_elegance": {
+      "evidence": [
+        "Fused DCP gather handoff between sparse_attn_indexer.py and mla_attention.py uses module-level shared mutable state (_PENDING_DCP_TOPK) rather than an explicit, typed parameter passed through the call chain.",
+        "mla_attention.py imports dcp_topk_take/finish inside the forward method at the call site, late-coupling the indexer seam and scattering the fused-gather protocol across two files.",
+        "builda_bmm_v1.py swallows the entire custom-op registration failure with `except Exception: pass`, so a registration problem becomes a silent runtime missing-kernel failure rather than a bounded, reported seam error.",
+        "campaign-2026-08/sircl/upstream/integrations/vllm/spark_tp4_backend.py and spark_tp4_vocab_allgather_backend.py keep cross-call integration state in module-level globals (_graph_*_sessions, _graph_event_counts) rather than in an injected backend context.",
+        "spark_tp4_backend.py catches `BaseException`, logs, and calls `_abort_after_native_failure()` in multiple places, making the lifecycle decision (worker suicide) implicit and repeated instead of centralized in one boundary policy.",
+        "cudagraph_utils.py imports parse_adaptive_spec_depth_ladder from depth_ladder.py so scheduler and capture manager share one canonical depth parser; this is a clean, single-translation-point seam.",
+        "overlays/vllm/distributed/parallel_state.py is a high fan-out hub imported by indexer, attention, cudagraph_utils, and the speculator; changes to group topology have broad seam blast radius.",
+        "b12x_mla_sparse.py contains a localized broad `except Exception: return` in `_sync_dcp_warmup`, silently absorbing DCP barrier failures during warmup rather than propagating or reporting them predictably.",
+        "logits_processor.py carries the lmhead-w8v2 sidecar integration behind a fail-loud env gate (VLLM_HEAD_W8V2_SIDEAR); this is an explicit, minimal seam even if it adds another branch to the layer."
+      ],
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor",
+      "confidence": "high"
+    }
+  },
+  "dimension_judgment": {
+    "mid_level_elegance": {
+      "dimension_character": "The active overlay seams are a mix of clean composition and ad-hoc glue. The shared depth parser and the env-gated lmhead sidecar show explicit, single-point translation, but several critical paths rely on module-level mutable state, late imports, and silent broad-exception handling to tie layers together. That makes handoffs implicit and lifecycle propagation uneven.",
+      "score_rationale": "A score of 62.0 reflects a codebase where integration seams mostly work but are not trustworthy: the fused DCP gather, the Spark TP4 native backends, and the builda custom-op boundary all use shared globals or silent swallowing that a developer cannot predict from the call signatures. The positive examples (depth_ladder parser, fail-loud sidecar gate) keep the score above 50, but the pattern of implicit state and broad exceptions prevents a higher rating."
+    }
+  },
+  "issues": [
+    {
+      "dimension": "mid_level_elegance",
+      "identifier": "fused_dcp_gather_uses_module_state",
+      "summary": "Fused DCP gather handoff relies on module-level mutable state instead of an explicit parameter",
+      "related_files": [
+        "overlays/vllm/model_executor/layers/sparse_attn_indexer.py",
+        "overlays/vllm/model_executor/layers/attention/mla_attention.py"
+      ],
+      "evidence": [
+        "sparse_attn_indexer.py defines `_PENDING_DCP_TOPK: dict = {}` at module scope and uses dcp_topk_defer/take/finish to stash candidate tensors for the next attention call.",
+        "mla_attention.py imports dcp_topk_take/finish inside forward and manually reassembles q and gathered candidates by raw byte concatenation, embedding the wire protocol in the attention forward path."
+      ],
+      "suggestion": "Replace the deferred global dict with an explicit `FusedDcpTopkState` object returned by the indexer and passed into the attention forward call, or model the fused gather as a single composed operation with one obvious translation point between the two modules.",
+      "confidence": "high",
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor",
+      "root_cause_cluster": "implicit_handoff_state"
+    },
+    {
+      "dimension": "mid_level_elegance",
+      "identifier": "builda_bmm_registration_silently_fails",
+      "summary": "builda_bmm_v1 swallows custom-op registration failure with a bare except",
+      "related_files": [
+        "overlays/vllm/model_executor/layers/attention/builda_bmm_v1.py"
+      ],
+      "evidence": [
+        "Lines 87-96 wrap the entire @torch.library.custom_op registration in `try: ... except Exception: pass`, so any registration error (duplicate name, torch version mismatch, fake impl conflict) becomes a silent no-op."
+      ],
+      "suggestion": "Catch specific exceptions from torch.library.custom_op, log at error level, and re-raise or set a module-level `_REGISTRATION_FAILED` flag that dispatch checks explicitly; do not silently degrade to missing operator at runtime.",
+      "confidence": "high",
+      "impact_scope": "module",
+      "fix_scope": "single_edit",
+      "root_cause_cluster": "silent_boundary_failure"
+    },
+    {
+      "dimension": "mid_level_elegance",
+      "identifier": "spark_tp4_backend_module_globals_for_sessions",
+      "summary": "Spark TP4 backend keeps per-rank session state in module-level globals",
+      "related_files": [
+        "campaign-2026-08/sircl/upstream/integrations/vllm/spark_tp4_backend.py",
+        "campaign-2026-08/sircl/upstream/integrations/vllm/spark_tp4_vocab_allgather_backend.py"
+      ],
+      "evidence": [
+        "spark_tp4_backend.py declares `_graph_q1_sessions`, `_graph_dual_port_q40_sessions`, `_graph_width4096_sessions`, and `_graph_event_counts` at module scope (lines 80-83).",
+        "spark_tp4_vocab_allgather_backend.py declares `_vocab_graph_sessions`, `_graph_event_counts`, `_DEFAULT_PEERS` at module scope similarly.",
+        "These globals act as cross-call integration context between the monkey-patched communicator methods and native session lifecycle, making ownership and cleanup implicit."
+      ],
+      "suggestion": "Move session state and event counts into an injected `_SparkTp4Backend` context object owned by the communicator instance (or a per-process registry with explicit lifecycle methods), so handoffs go through a single typed boundary instead of module-level mutable dictionaries.",
+      "confidence": "high",
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor",
+      "root_cause_cluster": "shared_mutable_integration_state"
+    },
+    {
+      "dimension": "mid_level_elegance",
+      "identifier": "spark_tp4_worker_termination_scattered",
+      "summary": "Spark TP4 worker-termination policy is duplicated at every native call site",
+      "related_files": [
+        "campaign-2026-08/sircl/upstream/integrations/vllm/spark_tp4_backend.py"
+      ],
+      "evidence": [
+        "Lines 420-430, 1472-1483, and other call sites each catch `BaseException`, log a fatal message, call `_abort_after_native_failure()`, and raise AssertionError.",
+        "The same lifecycle decision (worker suicide because CUDA stream may contain an unfulfillable wait) is repeated inline rather than handled by a single native-call wrapper or boundary policy."
+      ],
+      "suggestion": "Introduce a `_run_native_or_abort(callable, *args)` wrapper in one place that applies the documented post-enqueue termination policy; remove the duplicated try/except/log/abort blocks from each capture/eager call site.",
+      "confidence": "medium",
+      "impact_scope": "module",
+      "fix_scope": "multi_file_refactor",
+      "root_cause_cluster": "repeated_boundary_policy"
+    },
+    {
+      "dimension": "mid_level_elegance",
+      "identifier": "b12x_mla_sparse_silent_dcp_barrier_failure",
+      "summary": "b12x_mla_sparse silently returns on DCP barrier failure during warmup",
+      "related_files": [
+        "overlays/vllm/v1/attention/backends/mla/b12x_mla_sparse.py"
+      ],
+      "evidence": [
+        "`_sync_dcp_warmup` wraps the DCP group barrier in `try: ... except Exception: return` (lines 757-763), so a failed or inconsistent barrier during kernel warmup is absorbed with no log or propagation."
+      ],
+      "suggestion": "Log the exception and re-raise a RuntimeError with rank context, or at minimum record the failure in a warmup state object so the caller can fail predictably instead of continuing with an unsynchronized warmup.",
+      "confidence": "medium",
+      "impact_scope": "module",
+      "fix_scope": "single_edit",
+      "root_cause_cluster": "silent_boundary_failure"
+    },
+    {
+      "dimension": "mid_level_elegance",
+      "identifier": "parallel_state_hub_high_fan_out",
+      "summary": "parallel_state.py is a high fan-out topology hub with broad seam blast radius",
+      "related_files": [
+        "overlays/vllm/distributed/parallel_state.py",
+        "overlays/vllm/model_executor/layers/sparse_attn_indexer.py",
+        "overlays/vllm/model_executor/layers/attention/mla_attention.py",
+        "overlays/vllm/v1/worker/gpu/cudagraph_utils.py"
+      ],
+      "evidence": [
+        "parallel_state.py spans ~2400 LOC and is imported by the indexer, MLA attention, cudagraph capture manager, and speculator.",
+        "Group topology and env-gated short-circuit logic live in one file, so a change to any group type can ripple across unrelated seams."
+      ],
+      "suggestion": "Split group coordinator factories (TP/DCP/PP) into focused submodules and keep parallel_state.py as a thin facade; this localizes the impact of topology changes on downstream seams.",
+      "confidence": "low",
+      "impact_scope": "subsystem",
+      "fix_scope": "architectural_change",
+      "root_cause_cluster": "large_hub_module"
+    }
+  ],
+  "retrospective": {
+    "root_causes": [
+      "Overlay-by-vLLM design means many integration seams are monkey-patched into upstream call chains, so shared module state is a convenient but risky shortcut.",
+      "The native transport backends were written as quick campaign integrations; they never got refactored from inline exception-and-abort patterns into a centralized boundary policy.",
+      "Custom kernels and custom torch ops use broad exception handlers to remain compatible with stock builds, but that trades registration diagnostics for startup robustness."
+    ],
+    "likely_symptoms": [
+      "fused_dcp_gather_uses_module_state",
+      "spark_tp4_backend_module_globals_for_sessions",
+      "spark_tp4_worker_termination_scattered",
+      "builda_bmm_registration_silently_fails"
+    ],
+    "possible_false_positives": [
+      "cudagraph_utils_mixed_structural_types from batch-3 is a convention_outlier issue, not a handoff/seam problem; it should not be re-scored here.",
+      "The parallel_state topology short-circuit for VLLM_ONE_GPU_PER_NODE is a valuable seam simplification; the hub-size concern is about blast radius, not the feature itself."
+    ]
+  },
+  "context_updates": {
+    "mid_level_elegance": {
+      "add": [
+        {
+          "header": "Depth parser is a single canonical seam",
+          "description": "cudagraph_utils.py and the scheduler both import parse_adaptive_spec_depth_ladder from depth_ladder.py, so capture depths and scheduler selections stay synchronized through one shared definition. This is a clean, explicit boundary.",
+          "settled": true,
+          "positive": true
+        },
+        {
+          "header": "lmhead-w8v2 sidecar is an explicit env-gated seam",
+          "description": "logits_processor.py routes the lmhead-w8v2 path behind VLLM_HEAD_W8V2_SIDEAR and fails loudly when the env is set but the sidecar cannot be used. The gate is a single obvious translation point.",
+          "settled": true,
+          "positive": true
+        },
+        {
+          "header": "Fused DCP gather uses deferred module state",
+          "description": "sparse_attn_indexer.py and mla_attention.py coordinate the fused all-gather via a module-level _PENDING_DCP_TOPK dict and a late import inside the attention forward. This makes the handoff implicit and scatters the protocol across two modules.",
+          "settled": true,
+          "positive": false
+        },
+        {
+          "header": "Spark TP4 integration relies on module-level session globals",
+          "description": "spark_tp4_backend.py and spark_tp4_vocab_allgather_backend.py store native session objects and event counters in module-scope dicts. Cross-call state is not owned by an injected context, and worker termination logic is duplicated at every native boundary.",
+          "settled": true,
+          "positive": false
+        },
+        {
+          "header": "Broad silent exceptions at custom-op boundaries",
+          "description": "builda_bmm_v1.py and b12x_mla_sparse.py use bare `except Exception: pass` or `return` at registration and DCP-barrier seams, turning setup/warmup failures into silent runtime degradation rather than bounded, reportable errors.",
+          "settled": true,
+          "positive": false
+        }
+      ]
+    }
+  }
+}

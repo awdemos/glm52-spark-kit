@@ -1,4 +1,4 @@
-import re, sys
+import sys
 p = "/usr/local/lib/python3.12/dist-packages/vllm/v1/attention/backends/mla/indexer.py"
 s = open(p).read()
 old = """        max_num_blocks_per_req = cdiv(

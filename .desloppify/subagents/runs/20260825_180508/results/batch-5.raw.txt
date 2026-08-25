@@ -1,0 +1,122 @@
+{
+  "batch": "naming_quality",
+  "batch_index": 5,
+  "assessments": {
+    "naming_quality": 72.0
+  },
+  "dimension_notes": {
+    "naming_quality": {
+      "evidence": [
+        "Most overlay code follows upstream vLLM naming conventions: snake_case modules, domain-specific terms (kv_cache, mla, tp, dcp, pcp), and boolean predicates prefixed is_/has_/check_ returning bool.",
+        "A few generic-verb method names exist: process_weights_after_loading in overlays/vllm/model_executor/layers/attention/mla_attention.py (line 1043) does dequant + transpose + absorption setup; do_kv_cache_update in overlays/vllm/v1/attention/backends/mla/b12x_mla_sparse.py (line 496) routes the compact NVFP4 record to the b12x writer; run() in kernels/cute/marlin_w8a16_baseline.py is a standalone benchmark harness.",
+        "Mechanical scan for getX() mutating state produced many false positives because the AST cannot distinguish local accumulation from external mutation; spot-checked getters (get_top_tokens, get_mla_dims, get_kv_cache_torch_dtype, get_block_ids_for_computed_tokens, get_path) are pure or return new objects, so no confirmed getX-mutates defect was found.",
+        "Mechanical scan for isX()/hasX()/checkX() returning non-booleans found candidates, but manual inspection showed they return bool (is_torch_equal_or_newer, is_uniform_type, has_blocked_weights). No confirmed name/behavior mismatch.",
+        "Abbreviations are consistent with codebase convention: ctx, req, res, cfg appear widely and are documented skip items; dcp/tp/pcp/mla/nvfp4 are domain terms used consistently across overlays and docs.",
+        "Generic helper-module vocabulary appears in filenames like weight_utils.py, arg_utils.py, and cudagraph_utils.py, but these are bounded domain packages rather than meaningless buckets, and they mirror upstream vLLM structure."
+      ],
+      "impact_scope": "module",
+      "fix_scope": "single_edit",
+      "confidence": "medium",
+      "issues_preventing_higher_score": "The remaining defects are low-severity generic-verb names in a small number of overlay methods. Eliminating these and adding more descriptive verbs (dequant_and_absorb_weights, write_nvfp4_kv_cache, benchmark_marlin_w8a16) would push the score above 80.",
+      "sub_axes": {
+        "abstraction_leverage": 74.0,
+        "indirection_cost": 78.0,
+        "interface_honesty": 76.0,
+        "delegation_density": 75.0,
+        "definition_directness": 70.0,
+        "type_discipline": 74.0
+      }
+    }
+  },
+  "dimension_judgment": {
+    "naming_quality": {
+      "dimension_character": "The codebase is largely domain-honest: names mirror upstream vLLM conventions and use established abbreviations consistently. The main naming friction is a handful of generic-verb method names in overlay code that hide specialized work behind words like process, do, and run. No confirmed getX-mutates or isX-non-boolean mismatch was found after manual validation.",
+      "score_rationale": "Score 72 reflects solid, convention-following naming with isolated generic-verb lapses. The generic names are confined to a few overlay methods and do not create broad comprehension risk, but they are exactly the kind of name/behavior opacity the rubric flags."
+    }
+  },
+  "issues": [
+    {
+      "dimension": "naming_quality",
+      "identifier": "generic_process_weights",
+      "summary": "Generic verb 'process' hides specialized post-load dequant/absorption work in MLA attention layer.",
+      "related_files": [
+        "overlays/vllm/model_executor/layers/attention/mla_attention.py"
+      ],
+      "evidence": [
+        "def process_weights_after_loading(self, act_dtype: torch.dtype) at line 1043 performs get_and_maybe_dequant_weights, transpose, and DCP replication validation."
+      ],
+      "suggestion": "Rename to something intent-revealing like dequant_and_absorb_weights_after_loading or setup_absorbed_mla_weights.",
+      "confidence": "medium",
+      "impact_scope": "module",
+      "fix_scope": "single_edit"
+    },
+    {
+      "dimension": "naming_quality",
+      "identifier": "generic_do_kv_cache_update",
+      "summary": "Generic verb 'do' in do_kv_cache_update obscures that the method writes a custom NVFP4 record format.",
+      "related_files": [
+        "overlays/vllm/v1/attention/backends/mla/b12x_mla_sparse.py"
+      ],
+      "evidence": [
+        "def do_kv_cache_update(...) at line 496 routes to nvfp4_ds_mla_writer for the 368-byte compact record when kv_cache_dtype == 'nvfp4_ds_mla'."
+      ],
+      "suggestion": "Rename to write_nvfp4_kv_cache_record or route_nvfp4_kv_cache_write, matching the domain term nvfp4_ds_mla.",
+      "confidence": "medium",
+      "impact_scope": "module",
+      "fix_scope": "single_edit"
+    },
+    {
+      "dimension": "naming_quality",
+      "identifier": "generic_run_baseline",
+      "summary": "Top-level run() in a CuTe baseline harness reveals no benchmark purpose.",
+      "related_files": [
+        "kernels/cute/marlin_w8a16_baseline.py"
+      ],
+      "evidence": [
+        "def run() at line 25 simply calls ops.marlin_gemm; the file's purpose is timing Marlin W8A16 against a real weight."
+      ],
+      "suggestion": "Rename to benchmark_marlin_w8a16_step or marlin_gemm_benchmark_step.",
+      "confidence": "low",
+      "impact_scope": "local",
+      "fix_scope": "single_edit"
+    }
+  ],
+  "retrospective": {
+    "root_causes": [
+      "Overlay code preserves upstream vLLM method names to minimize merge friction, which carries generic upstream names into the project.",
+      "Benchmark and hardware-qualification scripts are often written quickly and receive less naming review than production overlays."
+    ],
+    "likely_symptoms": [
+      "Method names like process/do/run force readers to open the body to understand the domain operation.",
+      "Mechanical AST scans over-report getter-mutates and isX-non-bool because Python lacks effect tracking; manual adjudication is required."
+    ],
+    "possible_false_positives": [
+      "All get_*/is_*/has_* candidates flagged by AST heuristics; manual spot checks found them to be pure or bool-returning.",
+      "Helper-module filenames ending in _utils; in this codebase they are domain-bounded rather than generic dumping grounds."
+    ]
+  },
+  "context_updates": {
+    "naming_quality": {
+      "add": [
+        {
+          "header": "Overlay code follows upstream vLLM naming conventions",
+          "description": "Most overlay files intentionally mirror upstream names so merges stay low-friction. This is a deliberate maintenance choice, not accidental drift.",
+          "settled": true,
+          "positive": true
+        },
+        {
+          "header": "Domain abbreviations are consistent project-wide",
+          "description": "dcp, tp, pcp, mla, nvfp4, and cudagraph are used uniformly across overlays, launch scripts, docs, and tests. They read as project vocabulary rather than outlier abbreviations.",
+          "settled": true,
+          "positive": true
+        },
+        {
+          "header": "Generic-verb names cluster in overlay extension points",
+          "description": "A few methods introduced by overlays use process/do/run where a domain verb would be clearer. These are localized and fixable with single renames.",
+          "settled": true,
+          "positive": false
+        }
+      ]
+    }
+  }
+}

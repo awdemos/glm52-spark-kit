@@ -18,7 +18,6 @@ Interface assumptions are marked ASSUMPTION-<n> and must be reconciled against
 b12x/moe/_shared/btx_schema.py + w4a16/{prepare,btx,mixed_trellis}.py on the
 exact pinned commit before trusting a PASS.
 """
-import json
 import sys
 import torch
 
@@ -40,10 +39,10 @@ def ok(n, cond, detail=""):
 step(1, "import surface")
 try:
     from b12x.moe._shared.btx_schema import (
-        BTX_SCHEMA, BtxManifest, RATE_CODE_PAIR_KINDS,
-        RATE_STRUCTURE_PER_EXPERT_PAIR, RATE_STRUCTURE_UNIFORM)
-    from b12x.moe._shared.kernels.w4a16.btx import load_btx_container  # ASSUMPTION-1 name
-    from b12x.moe._shared.kernels.w4a16.mixed_trellis import run_mixed_trellis  # ASSUMPTION-2
+        BTX_SCHEMA, BtxManifest, RATE_CODE_PAIR_KINDS,  # noqa: F401
+        RATE_STRUCTURE_PER_EXPERT_PAIR, RATE_STRUCTURE_UNIFORM)  # noqa: F401
+    from b12x.moe._shared.kernels.w4a16.btx import load_btx_container  # noqa: F401
+    from b12x.moe._shared.kernels.w4a16.mixed_trellis import run_mixed_trellis  # noqa: F401
     ok(1, True)
 except Exception as e:
     ok(1, False, f"{type(e).__name__}: {e}")

@@ -1,0 +1,111 @@
+{
+  "batch": "ai_generated_debt",
+  "batch_index": 13,
+  "assessments": {
+    "ai_generated_debt": 72.0
+  },
+  "dimension_notes": {
+    "ai_generated_debt": {
+      "evidence": [
+        "Progress/result prints in campaign-2026-08/images/bake_overlays.py (39 lines) and benchmarks/profile/analyze_trace.py (51 lines) are functional output, not nosy debug logging.",
+        "benchmarks/correctness_probe.py has 9 print() calls and dspark-training/dspark_finetune.py has 11 print() calls; most are CLI-style progress reporting, but several object-level prints (token lists, shapes) feel like leftover debug probes.",
+        "quanttrio-tp4-dcp2/legacy-stack/mods/decode-aware-scheduler/apply_scheduler_patch.py contains 25 print() calls, many conditional on flags, but the volume suggests debug scaffolding still embedded in production overlay tooling.",
+        "overlay files such as overlays/vllm/v1/core/sched/scheduler.py (23.6% comment ratio) and overlays/vllm/model_executor/layers/attention/builda_bmm_v1.py (16.1% comment ratio) carry large explanatory blocks; some are helpful CUDA-scheduler notes, but many repeat what the named constants already say.",
+        "campaign-2026-08/tailquant/probe_btx_mixed_toy.py prints shapes/sums in a toy probe; acceptable as a scratch script, but still raises the codebase's print density.",
+        "No restating comments of the form '// increment counter' were found; comments generally explain why rather than what. No obvious pass-through wrappers without added logic.",
+        "Generic names (handleData/processItem) are not present in Python code; names are domain-specific (b12x_mla_sparse, fused_moe, marlin_moe)."
+      ],
+      "impact_scope": "module",
+      "fix_scope": "single_edit",
+      "confidence": "medium",
+      "issues_preventing_higher_score": "Residual print-heavy probe/benchmark files and verbose inline comments in large overlay modules prevent a higher score. These are not LLM-hallmark debt per se, but they are the closest matches to noisy/AI-ish surface patterns.",
+      "sub_axes": {
+        "comment_signal_to_noise": 65.0,
+        "log_print_discipline": 60.0,
+        "wrapper_triviality": 90.0,
+        "defensive_noise": 80.0,
+        "generic_naming": 90.0
+      }
+    }
+  },
+  "dimension_judgment": {
+    "ai_generated_debt": {
+      "dimension_character": "The codebase is mostly free of classic LLM-hallmark debt: no restating comments, no pass-through wrappers, and no generic handleData-style names. The residual debt is low-signal debug/logging noise in benchmark/launch scripts and verbose inline commentary in large overlay modules.",
+      "score_rationale": "A score of 72.0 reflects moderate cleanliness. The main deductions come from high print density in probe/overlay tools and comment-heavy overlay code; these patterns are functional rather than generated, but they still increase surface noise and suggest a few cleanup passes would improve maintainability."
+    }
+  },
+  "issues": [
+    {
+      "dimension": "ai_generated_debt",
+      "identifier": "debug_print_density_in_overlay_tools",
+      "summary": "apply_scheduler_patch.py contains 25 print() calls used as debug scaffolding",
+      "related_files": [
+        "quanttrio-tp4-dcp2/legacy-stack/mods/decode-aware-scheduler/apply_scheduler_patch.py"
+      ],
+      "evidence": [
+        "25 print() calls, many behind flags, but the volume indicates leftover debug instrumentation in production overlay tooling."
+      ],
+      "suggestion": "Replace flag-guarded prints with a small logger or remove the prints once the overlay path is stable; keep only user-facing warnings/errors.",
+      "confidence": "medium",
+      "impact_scope": "module",
+      "fix_scope": "single_edit"
+    },
+    {
+      "dimension": "ai_generated_debt",
+      "identifier": "shape_dump_prints_in_benchmarks",
+      "summary": "Several benchmark/probe scripts print intermediate shapes and token lists",
+      "related_files": [
+        "benchmarks/correctness_probe.py",
+        "dspark-training/dspark_finetune.py"
+      ],
+      "evidence": [
+        "correctness_probe.py has 9 prints and dspark_finetune.py has 11 prints, including shape dumps and token list dumps that read like debug probes."
+      ],
+      "suggestion": "Switch shape/token prints to an optional verbose logging level, or gate them behind a --debug flag.",
+      "confidence": "medium",
+      "impact_scope": "module",
+      "fix_scope": "single_edit"
+    },
+    {
+      "dimension": "ai_generated_debt",
+      "identifier": "verbose_comments_in_overlay_modules",
+      "summary": "Large overlay modules have high comment ratios, some restating code intent",
+      "related_files": [
+        "overlays/vllm/v1/core/sched/scheduler.py",
+        "overlays/vllm/model_executor/layers/logits_processor.py",
+        "overlays/vllm/model_executor/layers/attention/builda_bmm_v1.py"
+      ],
+      "evidence": [
+        "scheduler.py has a 23.6% comment ratio; several multi-line blocks repeat scheduler-stage names that already appear in the code."
+      ],
+      "suggestion": "Trim comments that merely restate the next line; retain only why/explanations for non-obvious CUDA scheduling logic.",
+      "confidence": "low",
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor"
+    }
+  ],
+  "retrospective": {
+    "root_causes": [
+      "This is an overlay-heavy research codebase, so scripts and overlays accumulate debug prints during bring-up."
+    ],
+    "likely_symptoms": [
+      "print() density",
+      "comment-heavy overlay modules"
+    ],
+    "possible_false_positives": [
+      "Prints in bake_overlays.py and analyze_trace.py are legitimate user-facing output, not nosy logging."
+    ]
+  },
+  "context_updates": {
+    "ai_generated_debt": {
+      "add": [
+        {
+          "header": "Mostly free of LLM-hallmark debt",
+          "description": "No restating comments, no pass-through wrappers, and no generic handleData-style names were found. Debt is limited to noisy prints and verbose comments in overlay tooling.",
+          "settled": true,
+          "positive": true
+        }
+      ]
+    }
+  }
+}

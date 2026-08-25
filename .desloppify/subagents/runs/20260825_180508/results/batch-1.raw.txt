@@ -1,0 +1,146 @@
+{
+  "batch": "cross_module_architecture",
+  "batch_index": 1,
+  "assessments": {
+    "cross_module_architecture": 62.0
+  },
+  "dimension_notes": {
+    "cross_module_architecture": {
+      "evidence": [
+        "Two near-identical overlay trees exist: overlays/vllm/ (production) and aeon-crossnode-graphs/overlays/vllm/ (archived hand-back). diff -rq shows only 5 content-divergent files plus a handful of AEON-only additions (PROVENANCE.md) and production-only additions (fused-dcp-gather support).",
+        "The production sparse_attn_indexer.py and mla_attention.py coordinate decode-time DCP work through a module-level mutable dict _PENDING_DCP_TOPK rather than an explicit interface; mla_attention.py reaches into sparse_attn_indexer.py to call dcp_topk_take/dcp_topk_finish.",
+        "parallel_state.py is imported by both the indexer/attention layers and by the dspark-ring speculator and cudagraph utilities, making it a high fan-out hub for runtime topology state.",
+        "The three consolidated subprojects (campaign-2026-08, quanttrio-tp4-dcp2, aeon-crossnode-graphs) share no cross-package imports, so their boundaries are technically intact, but aeon-crossnode-graphs carries 31.8% of repo LOC as a dead fork of overlays.",
+        "Legacy-stack sparse_attn_indexer.py under quanttrio-tp4-dcp2/legacy-stack/kernels/ is another fork of the same indexer with an R17-only scope comment, evidence that the indexer boundary has been re-forked rather than shared."
+      ],
+      "impact_scope": "subsystem",
+      "fix_scope": "architectural_change",
+      "confidence": "medium"
+    }
+  },
+  "dimension_judgment": {
+    "cross_module_architecture": {
+      "dimension_character": "The codebase is a source-form runtime kit formed by folding three independent repositories together. Its modules are mostly acyclic and low fan-in because they are overlay patches mounted over vLLM, but the production overlay pair (sparse_attn_indexer + mla_attention) relies on a hidden deferred mutable state bag to fuse collectives, and the AEON hand-back archive duplicates the entire overlay tree rather than referencing it.",
+      "score_rationale": "A score of 62.0 reflects that dependency direction is mostly preserved and there are no true import cycles, yet two serious boundary problems exist: a 31 KLOC archived fork of the production overlay tree blurs the repo boundary, and the DCP fused-gather path uses cross-module shared mutable state instead of an explicit contract. These are structural, not local, issues."
+    }
+  },
+  "issues": [
+    {
+      "dimension": "cross_module_architecture",
+      "identifier": "duplicate_overlay_tree_boundary",
+      "summary": "aeon-crossnode-graphs/overlays/vllm is a near-fork of overlays/vllm rather than a reference to shared source",
+      "related_files": [
+        "aeon-crossnode-graphs/overlays/vllm",
+        "overlays/vllm",
+        "README.md"
+      ],
+      "evidence": [
+        "diff -rq shows 61 overlapping files under the two overlay trees; only 5 files differ in content and the directory structures are identical.",
+        "package_size_census marks aeon-crossnode-graphs at 31.8% of total LOC and overlays at 46.1%.",
+        "README.md states the three sub-repos were 'folded in whole and archived in place with pointers back here', but the AEON overlay tree still carries live production code copies instead of symlinks or a shared package."
+      ],
+      "suggestion": "Replace aeon-crossnode-graphs/overlays/vllm with a reference (symlink, git submodule, or apply.sh overlay mount from the production tree) and keep AEON-specific deltas only in AEON-specific files. Delete or relocate the archived copy if it is no longer the active hand-back.",
+      "confidence": "high",
+      "impact_scope": "codebase",
+      "fix_scope": "architectural_change",
+      "root_cause_cluster": "archive-carrying-dead-code"
+    },
+    {
+      "dimension": "cross_module_architecture",
+      "identifier": "fused_dcp_gather_shared_mutable_state",
+      "summary": "sparse_attn_indexer and mla_attention coordinate via a module-level mutable state bag instead of an explicit interface",
+      "related_files": [
+        "overlays/vllm/model_executor/layers/sparse_attn_indexer.py",
+        "overlays/vllm/model_executor/layers/attention/mla_attention.py"
+      ],
+      "evidence": [
+        "sparse_attn_indexer.py defines _PENDING_DCP_TOPK: dict = {} at module scope and exposes dcp_topk_defer, dcp_topk_take, dcp_topk_finish.",
+        "mla_attention.py imports dcp_topk_take and dcp_topk_finish from sparse_attn_indexer, checks the pending dict, and calls back into dcp_topk_finish with gathered tensors.",
+        "The two modules use this shared state to collapse two DCP all-gathers into one; the state is neither parameterized nor isolated behind a small orchestrator object, so any consumer that forgets to consume or clear the pending entry risks a RuntimeError or stale data."
+      ],
+      "suggestion": "Introduce a small explicit FusedDcpGatherCoordinator class (or context manager) owned by the attention backend and passed into both the indexer and mla_attention paths, so the deferred state is scoped to a single decode step and cannot be corrupted by unrelated callers.",
+      "confidence": "high",
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor",
+      "root_cause_cluster": "implicit-cross-module-state"
+    },
+    {
+      "dimension": "cross_module_architecture",
+      "identifier": "parallel_state_hub_module",
+      "summary": "distributed.parallel_state is a hub imported by unrelated subsystems for runtime topology",
+      "related_files": [
+        "overlays/vllm/distributed/parallel_state.py",
+        "overlays/vllm/distributed/device_communicators/shm_broadcast.py",
+        "overlays/vllm/v1/worker/gpu/cudagraph_utils.py",
+        "overlays/dspark-ring/dflash_speculator.py",
+        "overlays/vllm/model_executor/layers/attention/mla_attention.py"
+      ],
+      "evidence": [
+        "parallel_state.py is 2402 LOC and provides get_dcp_group, in_the_same_node_as, and other topology primitives.",
+        "It is imported by the SHM broadcast layer, cudagraph capture utilities, the DSpark speculator, and attention backends, creating a broad blast radius for any change to group topology APIs.",
+        "This is not a framework-required pattern for vLLM overlays; the number of distinct subsystems depending on one file indicates the boundary could be split into topology discovery, group accessors, and node-locality helpers."
+      ],
+      "suggestion": "Refactor parallel_state.py into narrower modules (e.g. topology_state.py, group_registry.py, node_locality.py) so that each consumer imports only the contract it needs; keep the existing names as thin re-exports during transition.",
+      "confidence": "medium",
+      "impact_scope": "subsystem",
+      "fix_scope": "architectural_change",
+      "root_cause_cluster": "hub-module-blast-radius"
+    },
+    {
+      "dimension": "cross_module_architecture",
+      "identifier": "legacy_indexer_fork_duplication",
+      "summary": "quanttrio-tp4-dcp2/legacy-stack/kernels/sparse_attn_indexer.py is another fork of the same indexer logic",
+      "related_files": [
+        "quanttrio-tp4-dcp2/legacy-stack/kernels/sparse_attn_indexer.py",
+        "overlays/vllm/model_executor/layers/sparse_attn_indexer.py"
+      ],
+      "evidence": [
+        "The legacy file contains an R17 port comment and re-implements B12X sparse-indexer gating with environment reads, overlapping substantially with the production overlay indexer.",
+        "No file in the active codebase imports the legacy-stack version, but it remains in the repo as a historical archive.",
+        "README.md notes the legacy stack was 'folded in whole' and archived, yet it retains a large, nearly functional copy of a production module."
+      ],
+      "suggestion": "Move the legacy indexer to a doc-only provenance note or shrink it to the minimal diff/patch representation; if it must stay runnable, make it import from the production overlay and layer only the R17-specific gating code.",
+      "confidence": "medium",
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor",
+      "root_cause_cluster": "archive-carrying-dead-code"
+    }
+  ],
+  "retrospective": {
+    "root_causes": [
+      "Repo consolidation archived subprojects in place rather than converting them to references, leaving large near-duplicates.",
+      "Performance-driven collective fusion was implemented by reaching across module boundaries with a shared mutable dict instead of designing an explicit step-scoped coordinator."
+    ],
+    "likely_symptoms": [
+      "duplicate_overlay_tree_boundary",
+      "fused_dcp_gather_shared_mutable_state",
+      "parallel_state_hub_module",
+      "legacy_indexer_fork_duplication"
+    ],
+    "possible_false_positives": []
+  },
+  "context_updates": {
+    "cross_module_architecture": {
+      "add": [
+        {
+          "header": "Overlay files are low fan-in by design",
+          "description": "The import_graph_summary shows top_imported counts of 1 for most overlay files because they are mounted over vLLM site-packages at runtime, not imported by Python source in this repo. This is an intentional deployment boundary, not a sign of isolation.",
+          "settled": true,
+          "positive": true
+        },
+        {
+          "header": "AEON archive overlay tree duplicates production source",
+          "description": "aeon-crossnode-graphs/overlays/vllm mirrors overlays/vllm with only a few deltas. The duplication is structural dead weight from repo consolidation and should be resolved by reference, not style fixes.",
+          "settled": true,
+          "positive": false
+        },
+        {
+          "header": "Fused DCP gather uses implicit cross-module state",
+          "description": "The VLLM_FUSED_DCP_GATHER optimization in sparse_attn_indexer.py and mla_attention.py relies on a module-level _PENDING_DCP_TOPK dict. This trades explicit interfaces for performance and is a real cross-module architecture defect.",
+          "settled": true,
+          "positive": false
+        }
+      ]
+    }
+  }
+}
