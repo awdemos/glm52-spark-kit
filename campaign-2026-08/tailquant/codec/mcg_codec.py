@@ -50,9 +50,12 @@ def mem_available_bytes():
 
 avail = mem_available_bytes()
 if avail is None:
-    sys.exit("FAIL-CLOSED: cannot determine available memory")
+    print("FAIL-CLOSED: cannot determine available memory", file=sys.stderr)
+    sys.exit(1)
 if avail < MIN_FREE_BYTES:
-    sys.exit(f"FAIL-CLOSED: {avail / 2**30:.2f} GiB < {MIN_FREE_BYTES / 2**30:.0f} GiB floor")
+    print(f"FAIL-CLOSED: {avail / 2**30:.2f} GiB < {MIN_FREE_BYTES / 2**30:.0f} GiB floor",
+          file=sys.stderr)
+    sys.exit(1)
 print(f"[gate] mem available {avail / 2**30:.2f} GiB")
 
 import torch  # noqa: E402
@@ -85,7 +88,6 @@ def tile_decode(bits: int, words: torch.Tensor) -> torch.Tensor:
     t_offset enumerates the 256 weights of the tile in PACKED order; we define
     t = r*16 + c consistent between encode/decode (layout note in DESIGN v3)."""
     total_bits = bits * 256
-    n_words = total_bits // 32
     w = words.to(torch.int64) & 0xFFFFFFFF
 
     def ring_bit(i):
@@ -143,7 +145,7 @@ def tile_encode(target: torch.Tensor, bits: int, refine_passes: int = 1):
             ring[(base + b) % total_bits] = (best_bits >> b) & 1
         return best_val
 
-    for p in range(refine_passes + 1):
+    for _ in range(refine_passes + 1):
         for t in order:
             encode_element(t)
     # pack ring -> uint32 words (bit i of stream -> word i//32 bit i%32)

@@ -1,0 +1,211 @@
+{
+  "batch": "error_consistency",
+  "batch_index": 4,
+  "assessments": {
+    "error_consistency": 68.5
+  },
+  "dimension_notes": {
+    "error_consistency": {
+      "evidence": [
+        "Broad `except Exception:` used as a control-flow mechanism across overlay modules (e.g. builda_bmm_v1.py:87-96, builda_bmm_v0.py:130, nvfp4_ds_mla_writer.py:212/404) to gracefully degrade when torch.custom_op registration is unavailable; this masks the real failure reason and makes registration errors silent.",
+        "Silent swallowing in background loops: campaign-2026-08/sircl/upstream/integrations/vllm/spark_graph_status_reporter.py:89 swallows all exceptions in the status-publishing loop, and overlays/optional/tailquant/marlin_moe_profiler.py:87/106 silently discards profiling record/dump failures.",
+        "Fatal native-collective handlers use `except BaseException:` and call sys.exit without chaining the original exception (spark_tp4_backend.py:424/1476/1516, spark_tp4_vocab_allgather_backend.py:696/789/808), losing traceback context at worker death.",
+        "I/O boundary error handling is uneven: benchmark probes (sharedprefix_probe.py:93, midctx_probe.py:82, cachehit_probe.py:76, cache_capacity_probe.py:72) swallow malformed streaming payloads with `continue`, while weight_utils.py:134 logs but does not propagate atomic-write failures.",
+        "Mixed null-vs-throw strategies in the same conceptual layer: dspark-training/dspark_finetune.py skips corrupted torch.load snapshots via `except Exception: continue`, while config/vllm.py:2447 catch-and-raise preserves context. The inconsistency means callers cannot predict whether a failure will raise, return None, or be skipped."
+      ],
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor",
+      "confidence": "high",
+      "issues_preventing_higher_score": "Broad exception swallowing is used for both optional fallback (registration) and critical background work (status reporter, tailquant profiler). Fatal native paths lose original exception chains. These patterns are scattered across overlay subsystems rather than isolated to intentional top-level handlers."
+    }
+  },
+  "dimension_judgment": {
+    "error_consistency": {
+      "dimension_character": "The overlay code relies heavily on broad `except Exception:` and `except BaseException:` blocks to paper over optional registrations, background loops, and native collective failures. Where errors are caught they are often either silently swallowed or re-raised without chaining, so a developer cannot predict from one module to the next whether a failure will propagate, return None, log and continue, or kill the worker. There are intentional fatal-error strategies in the native transport layer, but they are not cleanly separated from recoverable errors and they discard traceback context.",
+      "score_rationale": "The score sits in the mixed/moderate band: error handling is not random, but it is uneven across the overlay subsystems. A developer can rely on the dominant pattern (raise on failure) in the kernel and core overlay paths, but will repeatedly encounter silent swallowing, broad catches, and mixed null/throw/exit strategies in the integration, benchmark, and optional layers. That friction prevents a higher score."
+    }
+  },
+  "issues": [
+    {
+      "dimension": "error_consistency",
+      "identifier": "silent_builda_registration_failure",
+      "summary": "builda BMM registration failures are silently swallowed",
+      "related_files": [
+        "overlays/vllm/model_executor/layers/attention/builda_bmm_v1.py",
+        "aeon-crossnode-graphs/overlays/vllm/model_executor/layers/attention/builda_bmm_v1.py",
+        "aeon-crossnode-graphs/overlays/vllm/model_executor/layers/attention/builda_bmm_v0.py",
+        "overlays/vllm/model_executor/layers/attention/builda_bmm_v0.py"
+      ],
+      "evidence": [
+        "Lines 87-96 of builda_bmm_v1.py wrap `torch.library.custom_op` registration in `try/except Exception: pass`, so an unsupported torch version or registration conflict leaves `_op` undefined with no diagnostic.",
+        "builda_bmm_v0.py uses the same pattern at line 130 (`except Exception: pass`)."
+      ],
+      "suggestion": "At minimum log the registration failure (e.g. `logger.warning('builda::bmm_v1 registration skipped: %s', exc)`). If the operation is meant to be optional, expose a runtime `builda_available()` flag and a clear message explaining why the fallback path is active.",
+      "confidence": "high",
+      "impact_scope": "module",
+      "fix_scope": "single_edit",
+      "root_cause_cluster": "broad_exception_as_control_flow"
+    },
+    {
+      "dimension": "error_consistency",
+      "identifier": "silent_status_reporter_loop",
+      "summary": "Graph status reporter background loop silently swallows all exceptions",
+      "related_files": [
+        "campaign-2026-08/sircl/upstream/integrations/vllm/spark_graph_status_reporter.py"
+      ],
+      "evidence": [
+        "Lines 85-91 run `_publish()` inside `while not self._stop.is_set()` and catch `Exception` with an empty body, so file-write, JSON serialization, or snapshot-provider errors are silently dropped every 0.25 s."
+      ],
+      "suggestion": "Record consecutive failures and log at a throttled rate (e.g. first failure and every Nth) using `logger.exception`. Consider stopping the reporter after a small consecutive failure threshold so operators notice broken status output rather than a mute loop.",
+      "confidence": "high",
+      "impact_scope": "module",
+      "fix_scope": "single_edit",
+      "root_cause_cluster": "silent_background_loop"
+    },
+    {
+      "dimension": "error_consistency",
+      "identifier": "tailquant_profiler_silent_failures",
+      "summary": "TailQuant profiler record and dump paths silently ignore all failures",
+      "related_files": [
+        "overlays/optional/tailquant/marlin_moe_profiler.py"
+      ],
+      "evidence": [
+        "Lines 87-88 and 106-107 use `except Exception: pass` around `index_add_` and JSON file writes. A full disk, permission error, or shape mismatch is hidden from both logs and operators.",
+        "The global `_TQ` dictionary is mutated from the hot path with no guard against partial initialization."
+      ],
+      "suggestion": "Emit a single warning per process lifetime on the first dump failure and a counter for record failures; use a small helper that logs at `logger.warning` with the exception summary rather than swallowing.",
+      "confidence": "high",
+      "impact_scope": "module",
+      "fix_scope": "single_edit",
+      "root_cause_cluster": "silent_background_loop"
+    },
+    {
+      "dimension": "error_consistency",
+      "identifier": "fatal_native_collectives_lose_context",
+      "summary": "Fatal native collective handlers catch BaseException but do not chain cause before exit",
+      "related_files": [
+        "campaign-2026-08/sircl/upstream/integrations/vllm/spark_tp4_backend.py",
+        "campaign-2026-08/sircl/upstream/integrations/vllm/spark_tp4_vocab_allgather_backend.py"
+      ],
+      "evidence": [
+        "spark_tp4_backend.py uses `except BaseException:` at lines 424, 1476, and 1516; after logging the message it falls through or calls exit without `raise ... from err`, so the original traceback is not available to crash handlers or Sentry.",
+        "spark_tp4_vocab_allgather_backend.py uses the same pattern at lines 696, 789, and 808."
+      ],
+      "suggestion": "Preserve the original exception when terminating: store `err` and either re-raise it after logging or exit with `sys.exit(1)` after logging `logger.exception` so the traceback is captured by the worker's crash handler. Avoid `BaseException` unless truly necessary (KeyboardInterrupt during native enqueue is questionable).",
+      "confidence": "medium",
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor",
+      "root_cause_cluster": "fatal_error_context_loss"
+    },
+    {
+      "dimension": "error_consistency",
+      "identifier": "benchmark_stream_parse_failures_swallowed",
+      "summary": "Benchmark probes silently skip malformed streaming response chunks",
+      "related_files": [
+        "benchmarks/sharedprefix_probe.py",
+        "benchmarks/midctx_probe.py",
+        "benchmarks/cachehit_probe.py",
+        "benchmarks/cache_capacity_probe.py"
+      ],
+      "evidence": [
+        "Each probe parses SSE/JSON chunks in a streaming loop and catches `Exception` with `continue` (sharedprefix_probe.py:93, midctx_probe.py:82, cachehit_probe.py:76, cache_capacity_probe.py:72). A persistent parse error is indistinguishable from a normal end of stream, so a probe can report success while actually receiving garbage.",
+        "The same pattern exists in campaign-2026-08/benchmarks/probe.py:126 in the metrics sampler thread."
+      ],
+      "suggestion": "Distinguish recoverable from fatal: log the parse error with a counter and abort if more than a small threshold of consecutive chunks fail. This preserves the robustness of streaming while making silent data corruption visible.",
+      "confidence": "medium",
+      "impact_scope": "module",
+      "fix_scope": "single_edit",
+      "root_cause_cluster": "silent_background_loop"
+    },
+    {
+      "dimension": "error_consistency",
+      "identifier": "mixed_null_throw_skip_strategies_in_dataloading",
+      "summary": "DSpark finetune loader mixes skip-on-error, return-None, and raise strategies",
+      "related_files": [
+        "dspark-training/dspark_finetune.py"
+      ],
+      "evidence": [
+        "Lines 248 and 323 catch `Exception` around `torch.load(..., weights_only=True)` and continue without logging, so a corrupted capture file is silently skipped. Elsewhere the same module uses assertions and explicit raises.",
+        "A caller of the dataset cannot tell whether a missing/invalid file will be skipped, return None, or raise."
+      ],
+      "suggestion": "Log each skipped file at `logger.warning` with the exception message, and optionally expose a strict mode that re-raises after a budget of tolerated skips so training silently dropping data is impossible.",
+      "confidence": "medium",
+      "impact_scope": "module",
+      "fix_scope": "single_edit",
+      "root_cause_cluster": "inconsistent_io_error_strategy"
+    },
+    {
+      "dimension": "error_consistency",
+      "identifier": "atomic_weight_write_failure_logged_not_propagated",
+      "summary": "Atomic weight write failure is logged but the error object is discarded",
+      "related_files": [
+        "aeon-crossnode-graphs/overlays/vllm/model_executor/model_loader/weight_utils.py"
+      ],
+      "evidence": [
+        "Lines 134-137 catch `Exception` during `os.replace` and log `logger.exception(...)'Original file not modified'`, but the function returns normally. Callers assume the write succeeded because no exception is raised.",
+        "The temporary file is left behind on failure."
+      ],
+      "suggestion": "Re-raise the original exception after logging, or return a boolean success flag that callers check. Do not let a failed atomic write appear to succeed.",
+      "confidence": "high",
+      "impact_scope": "local",
+      "fix_scope": "single_edit",
+      "root_cause_cluster": "inconsistent_io_error_strategy"
+    },
+    {
+      "dimension": "error_consistency",
+      "identifier": "parallel_state_broad_exception_assumptions",
+      "summary": "Parallel-state rank probes silently collapse all exceptions to a default boolean",
+      "related_files": [
+        "overlays/vllm/distributed/parallel_state.py",
+        "aeon-crossnode-graphs/overlays/vllm/distributed/parallel_state.py"
+      ],
+      "evidence": [
+        "Lines 2338 and 2360/2362 catch `Exception` in `is_in_the_same_node_as` and `is_first_rank` helpers and return a default (True/False) without logging. A genuine distributed failure is masked as a benign default answer.",
+        "The same double-nested pattern appears in both overlays/vllm/ and aeon-crossnode-graphs/overlays/vllm/."
+      ],
+      "suggestion": "Log unexpected exceptions at `logger.warning` before returning the safe default, and consider re-raising for `RuntimeError` from `torch.distributed` rather than treating every failure as a benign fallback condition.",
+      "confidence": "medium",
+      "impact_scope": "module",
+      "fix_scope": "single_edit",
+      "root_cause_cluster": "broad_exception_as_control_flow"
+    }
+  ],
+  "retrospective": {
+    "root_causes": [
+      "Broad `except Exception:`/`BaseException:` is used as control flow for optional feature registration and defensive rank detection, normalizing silent degradation.",
+      "Background loops and profiling side-cars were written with availability-first semantics, so any transient failure is swallowed to avoid crashing the main worker.",
+      "Native collective adapters intentionally terminate on suspected CUDA-stream poisoning, but they catch too widely and do not preserve traceback context."
+    ],
+    "likely_symptoms": [
+      "silent_builda_registration_failure",
+      "silent_status_reporter_loop",
+      "tailquant_profiler_silent_failures",
+      "fatal_native_collectives_lose_context"
+    ],
+    "possible_false_positives": []
+  },
+  "context_updates": {
+    "error_consistency": {
+      "add": [
+        {
+          "header": "Kernel paths raise on failure",
+          "description": "Core kernel files such as kernels/nvfp4_ds_mla_writer.py use explicit assertions and explicit tensor-shape checks and raise on violation. This makes the dominant compute-path error strategy predictable: fail loud with a clear message.",
+          "settled": true,
+          "positive": true
+        },
+        {
+          "header": "Native transport layer intentionally terminates on suspected stream poisoning",
+          "description": "The Spark TP4 native collective adapters in campaign-2026-08/sircl/upstream/integrations/vllm/ document that a failure after native enqueue terminates the worker because the CUDA stream may be poisoned. This is a deliberate, documented fatal-error boundary, not accidental swallowing.",
+          "settled": true,
+          "positive": false
+        },
+        {
+          "header": "Optional feature registration uses silent exception swallowing",
+          "description": "builda_bmm_v0/v1 and the nvfp4 writer wrap torch.custom_op registration in `except Exception: pass` so the overlay can load on older or differently-configured vLLM images without crashing import. The intent is pragmatic, but the implementation discards the reason and gives no runtime signal that the feature is unavailable.",
+          "settled": true,
+          "positive": false
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "batch": "incomplete_migration",
+  "batch_index": 14,
+  "assessments": {
+    "incomplete_migration": 92.0
+  },
+  "dimension_notes": {
+    "incomplete_migration": {
+      "evidence": [
+        "Repository is Python-only: no JS/TS files, so no moment/dayjs, axios/fetch, or class-vs-functional component migration surface exists.",
+        "No @deprecated decorators found in production code. DEPRECATED markers are limited to intentional backward-compatibility paths: `maybe_remap_kv_scale_name` in `overlays/vllm/model_executor/model_loader/weight_utils.py` remaps a deprecated checkpoint field to current `k_scale`/`v_scale`, and `overlays/vllm/config/cache.py` warns on `--calculate-kv-scales` while preserving the flag for external CLI consumers.",
+        "Old+new API coexistence is intentional and measured: `overlays/vllm/model_executor/layers/attention/builda_bmm_v0.py` and `builda_bmm_v1.py` are staged behind `VLLM_BUILDA_BMM` (default off). README explicitly states both are 'carried for completeness and disabled in the production launcher' with measured v0-vs-v1 parity.",
+        "Migration TODOs in active files are tracked against external releases or issue numbers: `overlays/vllm/distributed/parallel_state.py` cites PyTorch PR #165086 for a patched collective, and issue #35915 for a TPU custom-op check.",
+        "`overlays/dspark-ring/cp_utils.py` keeps an FA2-only DCP path gated by `fa_version == 2` with a TODO naming the exact upstream condition (FA4 Blackwell head_size=256 support) that must be met before removal.",
+        "The `quanttrio-tp4-dcp2/legacy-stack/` and `aeon-crossnode-graphs/` directories are explicitly archived subprojects from the 2026-08-24 repo consolidation; the top-level README calls them 'folded in whole and archived in place with pointers back here'. They are records, not active migration shims.",
+        "Active overlays do not import from the archived legacy stacks, and there are no mixed-language modules or stale shims with no remaining callers."
+      ],
+      "impact_scope": "codebase",
+      "fix_scope": "single_edit",
+      "confidence": "high",
+      "issues_preventing_higher_score": "No concrete stale migration or deprecated-symbol defect was found. A perfect score is withheld only because the codebase intentionally carries old+new API pairs (builda_bmm v0/v1) and frozen archived lineages; these are not errors today, but they are migration surface that must be revisited when the experiment or record-keeping value expires."
+    }
+  },
+  "dimension_judgment": {
+    "incomplete_migration": {
+      "dimension_character": "This is a Python-only vLLM overlay/runtime kit with very little migration debt. The few places where old and new API patterns coexist—deprecated checkpoint fields, staged Triton kernel variants, and archived subproject copies—are all deliberate, documented, and either disabled by default or preserved for external compatibility.",
+      "score_rationale": "A score of 92.0 reflects that the codebase does not suffer from incomplete migrations in any active, problematic sense: there are no stale shims, no deprecated symbols still called without justification, no mixed JS/TS modules, and migration TODOs are tied to specific upstream fixes or issue numbers. The deduction is a small conservatism reserve for the intentional old+new API surface and archived lineages that will eventually need cleanup."
+    }
+  },
+  "issues": [],
+  "retrospective": {
+    "root_causes": [
+      "The project is an overlay/runtime kit that sits on top of upstream vLLM and carries multiple experimental/legacy lineages by design.",
+      "Deprecated paths and compatibility shims are retained for external consumers (CLI flags, checkpoint formats) rather than internal drift."
+    ],
+    "likely_symptoms": [
+      "builda_bmm_v0/v1 dual files could be mistaken for an unfinished migration",
+      "legacy-stack and aeon-crossnode-graphs archives could be mistaken for duplicated, unmigrated code"
+    ],
+    "possible_false_positives": [
+      "`builda_bmm_v0`/`v1` are a controlled, measured, disabled-by-default rollout, not a stale migration",
+      "`allow_deprecated_quantization`, `calculate_kv_scales`, and `kv_scale` remapping are backward-compatibility bridges for external users, not internal migration debt",
+      "`legacy-stack/` and `aeon-crossnode-graphs/` are explicitly archived records from a repo consolidation, not active incomplete migrations"
+    ]
+  },
+  "context_updates": {
+    "incomplete_migration": {
+      "add": [
+        {
+          "header": "Python-only runtime kit with no frontend migration surface",
+          "description": "The repository contains no JavaScript or TypeScript files, so there is no moment/dayjs, axios/fetch, or class-vs-functional component migration surface to evaluate.",
+          "settled": true,
+          "positive": true
+        },
+        {
+          "header": "Old/new API pairs are intentional and measured",
+          "description": "`builda_bmm_v0.py` and `builda_bmm_v1.py` are staged behind `VLLM_BUILDA_BMM` and disabled in production. The README documents measured parity and the reason both are carried, so this is a controlled rollout rather than incomplete migration.",
+          "settled": true,
+          "positive": true
+        },
+        {
+          "header": "Deprecated paths retained for external compatibility",
+          "description": "`--calculate-kv-scales`, `allow-deprecated-quantization`, and `kv_scale` checkpoint remapping are compatibility bridges for upstream vLLM CLI users and checkpoint formats, not internal migration debt.",
+          "settled": true,
+          "positive": true
+        },
+        {
+          "header": "Migration TODOs reference concrete upstream conditions",
+          "description": "TODOs in `parallel_state.py` and `cp_utils.py` name specific PyTorch releases, issue numbers, or FA4 capabilities that must be satisfied before removal. They are tracked active migrations, not stale shims.",
+          "settled": true,
+          "positive": true
+        },
+        {
+          "header": "Archived subprojects are frozen records, not active migration debt",
+          "description": "`quanttrio-tp4-dcp2/legacy-stack/` and `aeon-crossnode-graphs/` were folded into the consolidated repo as read-only archives with their own READMEs. Active overlays do not import from them.",
+          "settled": true,
+          "positive": true
+        }
+      ]
+    }
+  }
+}

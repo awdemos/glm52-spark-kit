@@ -25,7 +25,6 @@ cold regardless. Ties broken by id for determinism.
 """
 import argparse
 import json
-import sys
 
 
 def gini(counts):

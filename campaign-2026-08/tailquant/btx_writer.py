@@ -116,9 +116,8 @@ def main():
         print(json.dumps(summary))
 
     if args.write:
-        import torch
         from b12x.moe._shared.btx_schema import (
-            RATE_CODE_PAIR_KINDS, rate_code, ATOM_CHANNELS, ATOMS_PER_PAIR)
+            RATE_CODE_PAIR_KINDS, ATOM_CHANNELS, ATOMS_PER_PAIR)
         from b12x.moe._shared.kernels.w4a16.btx_synth import (
             BtxSynthConfig, write_btx_checkpoint)
 
@@ -131,7 +130,7 @@ def main():
                     torch.tensor(tbl[1], dtype=torch.uint8))
 
         rt = {int(k): to_tensors(v) for k, v in cfg["rate_tables"].items()}
-        for k, (a_, b_) in rt.items():
+        for _k, (a_, b_) in rt.items():
             for t in (a_, b_):
                 for code in t.unique().tolist():
                     assert int(code) in RATE_CODE_PAIR_KINDS, f"bad code {code:#x}"

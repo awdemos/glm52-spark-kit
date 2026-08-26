@@ -1,0 +1,133 @@
+{
+  "batch": "package_organization",
+  "batch_index": 15,
+  "assessments": {
+    "package_organization": 52.0
+  },
+  "dimension_notes": {
+    "package_organization": {
+      "evidence": [
+        "The package_size_census shows two disproportionately large packages: overlays/ at 46.1% of total LOC and aeon-crossnode-graphs/ at 31.8%. Together they dominate the repository, and aeon-crossnode-graphs is largely a duplicate of overlays/.",
+        "directory_profiles confirm low cohesion: campaign-2026-08/sircl/upstream/integrations/vllm/ has 14 files (4769 LOC) with 0.0 avg fan-in/fan-out, yet mixes TP4 backend, query contract, port namespace, collectives audit, cudagraph bucket contract, persistent output ring, vocab allgather backend, graph status reporter, and numerical audit in one flat directory.",
+        "quanttrio-tp4-dcp2/legacy-stack/kernels/ holds 10 files and 9831 LOC under a single flat folder, with no sub-package separation by kernel concern (MLA, MoE, attention, gemm).",
+        "overlays/vllm/v1/attention/backends/mla/ contains 7 files (4703 LOC) spanning sparse MLA, indexer, writer, deep gemm fallbacks, patch ops, MQA, and registry \u2014 several distinct responsibilities in one directory.",
+        "overlays/dspark-ring/ has 5 files (3362 LOC) but no README or sub-structure explaining how speculators, kv manager, cp_utils, and speculators_algos relate.",
+        "Root-level files include apply.sh, verify.sh, MANIFEST.json, README.md, and NOTICE. These are genuinely core (high fan-in conceptually via launchers/docs), so they are excluded from straggler concerns.",
+        "No coupling_matrix or root_files fan-in data is present in the blind packet, so straggler-root decisions are based on directory profiles and visible duplication."
+      ],
+      "impact_scope": "codebase",
+      "fix_scope": "architectural_change",
+      "confidence": "medium",
+      "issues_preventing_higher_score": "The two dominant duplicate overlay trees and the flat 14-file integrations directory prevent a higher score. A score above 70 would require either merging aeon-crossnode-graphs into overlays or archiving it, plus splitting the integrations directory by concern.",
+      "sub_axes": {
+        "ownership_alignment": 45.0,
+        "concern_cohesion": 50.0,
+        "change_boundary_clarity": 55.0,
+        "navigation_simplicity": 50.0,
+        "duplicate_surface": 40.0
+      }
+    }
+  },
+  "dimension_judgment": {
+    "package_organization": {
+      "dimension_character": "The repository is dominated by two near-identical vLLM overlay trees and several large, flat directories that mix unrelated concerns. Top-level packages map roughly to historical repos rather than to ownership boundaries, so developers must already know the history to predict where a change belongs.",
+      "score_rationale": "A score of 52.0 reflects significant structural debt. The overlays/ versus aeon-crossnode-graphs/ duplication is the biggest navigability hit, followed by flat directories that bundle too many responsibilities. The layout is usable for insiders but costly for newcomers and for any automated change-impact analysis."
+    }
+  },
+  "issues": [
+    {
+      "dimension": "package_organization",
+      "identifier": "duplicate_overlay_tree_package",
+      "summary": "aeon-crossnode-graphs/overlays/ duplicates overlays/ without clear ownership boundary",
+      "related_files": [
+        "overlays/",
+        "aeon-crossnode-graphs/overlays/"
+      ],
+      "evidence": [
+        "package_size_census shows overlays/ at 46.1% LOC and aeon-crossnode-graphs/ at 31.8% LOC. directory_profiles reveal identical subpaths (vllm/config, vllm/model_executor/layers/attention, vllm/v1/attention/backends/mla) with duplicated files such as weight_utils.py, scheduler.py, and tiled_topk.py."
+      ],
+      "suggestion": "Stage 1: archive aeon-crossnode-graphs/ to a clearly marked historical/ directory with a README explaining provenance. Stage 2: if AEON-specific diffs are still needed, extract them into overlays/vllm-aeon/ as delta files that import from overlays/vllm/. Stage 3: delete or migrate AEON-specific files and update MANIFEST.json and apply.sh sets. Validation: run verify.sh and ensure MANIFEST.md5 hashes still cover active overlays.",
+      "confidence": "high",
+      "impact_scope": "codebase",
+      "fix_scope": "architectural_change"
+    },
+    {
+      "dimension": "package_organization",
+      "identifier": "flat_integrations_directory",
+      "summary": "campaign-2026-08/sircl/upstream/integrations/vllm/ mixes 14 unrelated integration files in one directory",
+      "related_files": [
+        "campaign-2026-08/sircl/upstream/integrations/vllm/"
+      ],
+      "evidence": [
+        "directory_profiles: 14 files, 4769 LOC, avg fan-in/fan-out 0.0. Files include spark_tp4_backend.py, spark_tp4_port_namespace.py, spark_tp4_query_contract.py, spark_tp4_query_row_provider.py, spark_collective_audit.py, spark_dcp_collective_audit.py, spark_cudagraph_bucket_contract.py, spark_graph_status_reporter.py, spark_persistent_output_ring.py, spark_tp4_vocab_allgather_backend.py, tp4_numerical_audit.py, sitecustomize.py, probe_shared_capture_stream.py, probe_vocab_graph_stream_switch.py."
+      ],
+      "suggestion": "Split into purpose-driven subpackages: backend/ (tp4 backend, port namespace, query contract/provider, vocab allgather), audit/ (collective audits, numerical audit, graph status reporter), cudagraph/ (bucket contract, shared capture stream probe, vocab graph stream switch), and runtime/ (persistent output ring, sitecustomize). Update imports in tests and launchers. Validation: grep -R 'from .*integrations.vllm' and fix all import paths.",
+      "confidence": "medium",
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor"
+    },
+    {
+      "dimension": "package_organization",
+      "identifier": "legacy_stack_flat_kernels",
+      "summary": "quanttrio-tp4-dcp2/legacy-stack/kernels/ is a flat 10-file, 9831-LOC directory with no concern separation",
+      "related_files": [
+        "quanttrio-tp4-dcp2/legacy-stack/kernels/"
+      ],
+      "evidence": [
+        "directory_profiles: 10 files, 9831 LOC, avg fan-in/fan-out 0.1. Contains sparse_mla_kernels.py (3567 LOC), deepseek_v2.py (1810 LOC), sm12x_sparse_mla_attn.py (994 LOC), sparse_attn_indexer.py, and others with no subfoldering by attention/MoE/gemm."
+      ],
+      "suggestion": "If the legacy stack is archived, add an ARCHIVED.md and stop treating it as production. If it remains active, split into attention/, moe/, gemm/, and indexer/ subpackages and update legacy launchers. Validation: ensure any active launcher that imports from legacy-stack/kernels/ still resolves the modules.",
+      "confidence": "medium",
+      "impact_scope": "subsystem",
+      "fix_scope": "architectural_change"
+    },
+    {
+      "dimension": "package_organization",
+      "identifier": "dspark_ring_undocumented_package",
+      "summary": "overlays/dspark-ring/ has 5 files and 3362 LOC with no internal structure or README",
+      "related_files": [
+        "overlays/dspark-ring/"
+      ],
+      "evidence": [
+        "directory_profiles: 5 files, 3362 LOC, 0.0 fan-in/fan-out. Files are kv_cache_manager.py, cp_utils.py, speculators_algos.py, and others, but no README explains the ring's role relative to overlays/vllm/distributed/."
+      ],
+      "suggestion": "Add a README.md in overlays/dspark-ring/ explaining the ring abstraction and file responsibilities. If the package grows, split into manager/, comm/, and speculative/ subpackages.",
+      "confidence": "low",
+      "impact_scope": "module",
+      "fix_scope": "single_edit"
+    }
+  ],
+  "retrospective": {
+    "root_causes": [
+      "Three formerly separate repos were folded into one without repackaging; their historical layouts were preserved.",
+      "vLLM overlay files must mirror upstream package paths, which constrains some directory choices but does not explain the duplicate aeon tree."
+    ],
+    "likely_symptoms": [
+      "duplicate overlay files",
+      "flat integration directory",
+      "legacy-stack flat kernels",
+      "newcomers cannot predict file location"
+    ],
+    "possible_false_positives": [
+      "Root-level apply.sh, verify.sh, MANIFEST.json, and README.md are genuinely core and correctly kept at the root."
+    ]
+  },
+  "context_updates": {
+    "package_organization": {
+      "add": [
+        {
+          "header": "Duplicate overlay trees dominate package layout",
+          "description": "overlays/ and aeon-crossnode-graphs/overlays/ together account for nearly 78% of repository LOC and contain the same files, making the package map confusing and inflating every search/change operation.",
+          "settled": true,
+          "positive": false
+        },
+        {
+          "header": "Flat integration directory bundles unrelated concerns",
+          "description": "campaign-2026-08/sircl/upstream/integrations/vllm/ holds backend, audit, cudagraph, and runtime integration modules in one folder, so ownership and change boundaries are not visible from the directory structure.",
+          "settled": true,
+          "positive": false
+        }
+      ]
+    }
+  }
+}

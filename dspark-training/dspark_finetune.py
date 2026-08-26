@@ -25,7 +25,6 @@ original config.json).
 """
 import glob
 import json
-import math
 import os
 import random
 
