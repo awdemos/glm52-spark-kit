@@ -74,7 +74,8 @@ def main():
     ap.add_argument("--out", default="plan.json")
     args = ap.parse_args()
 
-    hist = json.load(open(args.histogram))
+    with open(args.histogram) as f:
+        hist = json.load(f)
     layers = {}
     for key, counts in sorted(hist.items()):
         hot, cold, cov = split_layer(counts, args.target_coverage,
@@ -89,7 +90,7 @@ def main():
         }
 
     n_layers = len(layers)
-    avg_cov = sum(l["coverage"] for l in layers.values()) / max(n_layers, 1)
+    avg_cov = sum(layer["coverage"] for layer in layers.values()) / max(n_layers, 1)
     # bytes scale ~linearly in bits within a format family; scales add fixed
     # overhead modeled inside --baseline-bits already
     eff_bits = (args.bits_hot * args.target_coverage +
@@ -104,7 +105,8 @@ def main():
         "note": "ratios are approximate; scales/grouping overhead not modeled",
     }
     out = {"policy": vars(args), "projection": proj, "layers": layers}
-    json.dump(out, open(args.out, "w"), indent=1)
+    with open(args.out, "w") as f:
+        json.dump(out, f, indent=1)
     print(f"wrote {args.out}: {n_layers} layers, "
           f"avg coverage {proj['avg_hot_coverage']}, "
           f"eff bits/w {proj['effective_bits_per_weight']}")
