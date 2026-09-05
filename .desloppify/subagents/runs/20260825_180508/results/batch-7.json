@@ -1,0 +1,117 @@
+{
+  "batch": "dependency_health",
+  "batch_index": 7,
+  "assessments": {
+    "dependency_health": 70.0
+  },
+  "dimension_notes": {
+    "dependency_health": {
+      "evidence": [
+        "AST-based import graph analysis across all Python files found zero strongly-connected cycles among project package roots (overlays/, kernels/, tests/, benchmarks/, campaign-2026-08/, quanttrio-tp4-dcp2/, aeon-crossnode-graphs/, dspark-training/, gates/, platform/), so there are no circular dependency cycles in the project's own code.",
+        "The codebase has no project-level dependency manifest (no requirements.txt, pyproject.toml, setup.py, poetry.lock, or package-lock.json). Dependencies are inherited from the pinned Docker base images and the MANIFEST.json overlay system, which is appropriate for a runtime overlay kit but makes local development dependency auditing harder.",
+        "Production image pinning is explicit: images/vllm-b12x.Dockerfile pins b12x to commit 334a2d75d166becea0aa640b402d521ea0a290eb and nvidia-cutlass-dsl==4.6.0; MANIFEST.json records md5s and provenance for every overlay.",
+        "Two Dockerfiles are byte-identical: aeon-crossnode-graphs/Dockerfile and platform/Dockerfile both build the AEON 0.27.1 base + b12x@334a2d75 and copy overlays into site-packages. Keeping both means any future dependency pin edit must be made in two places.",
+        "Dependency version drift exists between build contexts: campaign-2026-08/images/Dockerfile force-reinstalls b12x from ref 36bce2c15 and nvidia-cutlass-dsl==4.6.2 on top of the production vllm-b12x:v0.27.0-pinned image (which already pins b12x@334a2d75 and cutlass-dsl 4.6.0). This means the campaign image and production image can ship different sparse-MLA/cutlass-dsl behavior.",
+        "Third-party `regex` is imported as `re` in overlays/vllm/engine/arg_utils.py and overlays/vllm/model_executor/model_loader/weight_utils.py. This adds an implicit extra dependency beyond the Python standard library `re` module, and because the repo has no manifest the requirement is not visible to a reader or installer."
+      ],
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor",
+      "confidence": "medium"
+    }
+  },
+  "dimension_judgment": {
+    "dependency_health": {
+      "dimension_character": "The project is a Docker-based runtime overlay kit, so its dependency story is intentionally image-level rather than manifest-driven. Pinning is generally explicit and there are no circular import cycles, but there is real dependency drift between the production image, the campaign image, and the legacy/v0.27 experimental images, plus an implicit third-party `regex` dependency and a duplicated Dockerfile.",
+      "score_rationale": "A score of 70.0 reflects solid baseline health: no cycles, clear image-level pinning for production, and domain-appropriate heavy dependencies. The score is held below 80 by cross-context pin drift, a duplicated Dockerfile declaration, and the absence of any project-level dependency manifest that would make the implicit `regex` requirement discoverable."
+    }
+  },
+  "issues": [
+    {
+      "dimension": "dependency_health",
+      "identifier": "duplicate_dockerfile_declarations",
+      "summary": "aeon-crossnode-graphs/Dockerfile and platform/Dockerfile are byte-identical, creating a maintenance hazard for dependency pins.",
+      "related_files": [
+        "aeon-crossnode-graphs/Dockerfile",
+        "platform/Dockerfile"
+      ],
+      "evidence": [
+        "diff -q reports no differences between the two files.",
+        "Both files use FROM ghcr.io/aeon-7/aeon-vllm-ultimate:2026-08-16-v0.27.1, ARG B12X_REF=334a2d75d166becea0aa640b402d521ea0a290eb, and COPY overlays/ into /usr/local/lib/python3.12/site-packages/."
+      ],
+      "suggestion": "Delete one Dockerfile and reference the other from both locations, or move the shared image definition to a single file (e.g., images/glm52-spark-platform.Dockerfile) and have both aeon-crossnode-graphs/ and platform/ build from it.",
+      "confidence": "high",
+      "impact_scope": "module",
+      "fix_scope": "single_edit"
+    },
+    {
+      "dimension": "dependency_health",
+      "identifier": "b12x_cutlass_dsl_pin_drift",
+      "summary": "Campaign/legacy build contexts override production b12x and cutlass-dsl pins without a visible compatibility guard.",
+      "related_files": [
+        "images/vllm-b12x.Dockerfile",
+        "campaign-2026-08/images/Dockerfile",
+        "quanttrio-tp4-dcp2/v027/Dockerfile.deepgemm-fix"
+      ],
+      "evidence": [
+        "images/vllm-b12x.Dockerfile pins b12x@334a2d75 and nvidia-cutlass-dsl==4.6.0.",
+        "campaign-2026-08/images/Dockerfile starts from vllm-b12x:v0.27.0-pinned (above pins) but then force-reinstalls b12x@36bce2c15 and nvidia-cutlass-dsl==4.6.2.",
+        "quanttrio-tp4-dcp2/v027/Dockerfile.deepgemm-fix uses vllm/vllm-openai:v0.27.0-aarch64 rather than the production vllm/vllm-openai:v0.27.0 tag."
+      ],
+      "suggestion": "Document each pin override in its build context README and add an image-build assertion that prints/verifies the installed versions of b12x and nvidia-cutlass-dsl; align pins to production unless an experiment specifically requires a newer version.",
+      "confidence": "medium",
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor"
+    },
+    {
+      "dimension": "dependency_health",
+      "identifier": "implicit_regex_dependency",
+      "summary": "Overlay files import the third-party `regex` package as `re`, but the repo has no manifest declaring it.",
+      "related_files": [
+        "overlays/vllm/engine/arg_utils.py",
+        "overlays/vllm/model_executor/model_loader/weight_utils.py"
+      ],
+      "evidence": [
+        "overlays/vllm/engine/arg_utils.py line 29: `import regex as re`.",
+        "overlays/vllm/model_executor/model_loader/weight_utils.py lines 24 and 1465: `import regex as re`.",
+        "No requirements.txt/pyproject.toml exists to record `regex` as a dependency, so it is not obvious whether the package is provided by the base image or an accidental extra."
+      ],
+      "suggestion": "If stdlib `re` suffices, replace `import regex as re` with `import re`; otherwise add a dependency note (e.g., in README.md or a requirements.txt) and a runtime import guard that falls back to stdlib `re` when `regex` is unavailable.",
+      "confidence": "low",
+      "impact_scope": "local",
+      "fix_scope": "single_edit"
+    }
+  ],
+  "retrospective": {
+    "root_causes": [
+      "The repo was formed by folding three independent repositories together and keeping them as in-place archives, so dependency declarations were copied rather than unified.",
+      "The overlay-first deployment model pushes dependency ownership into Docker images, so there is no single project manifest to expose version drift or implicit packages."
+    ],
+    "likely_symptoms": [
+      "duplicate_dockerfile_declarations",
+      "b12x_cutlass_dsl_pin_drift",
+      "implicit_regex_dependency"
+    ],
+    "possible_false_positives": [
+      "co-occurring dataclasses and pydantic in vLLM config overlay files is an upstream vLLM pattern, not a project-level duplicate-library choice.",
+      "Stdlib `re` is never imported alongside `regex` in the same file, so the two are not competing in the same module."
+    ]
+  },
+  "context_updates": {
+    "dependency_health": {
+      "add": [
+        {
+          "header": "Image-level dependency pinning",
+          "description": "Production dependencies are pinned inside Dockerfiles and base image tags (vllm/vllm-openai:v0.27.0, b12x commit ref, nvidia-cutlass-dsl version) rather than in a Python package manifest. This matches the overlay runtime model and gives reproducible fleet images, but it also means there is no single local dependency file to audit.",
+          "settled": true,
+          "positive": true
+        },
+        {
+          "header": "Acyclic project import graph",
+          "description": "AST-based SCC analysis found no circular import cycles across project package roots. Dependency direction is clean because most modules are vLLM overlays that import upstream vllm/torch rather than each other.",
+          "settled": true,
+          "positive": true
+        }
+      ]
+    }
+  }
+}

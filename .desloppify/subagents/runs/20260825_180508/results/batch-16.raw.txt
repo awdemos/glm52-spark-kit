@@ -1,0 +1,136 @@
+{
+  "batch": "initialization_coupling",
+  "batch_index": 16,
+  "assessments": {
+    "initialization_coupling": 55.0
+  },
+  "dimension_notes": {
+    "initialization_coupling": {
+      "evidence": [
+        "scan_evidence.mutable_globals lists 20 files with module-level mutations. The same files often exist in both overlays/ and aeon-crossnode-graphs/ (config/vllm.py, distributed/parallel_state.py, v1/attention/backends/registry.py), so global state is duplicated across overlay trees.",
+        "overlays/vllm/utils/torch_utils.py monkey-patches torch.cuda.set_stream at module scope (lines 656, 689, 717 with global _aux_stream). platform/merged/torch_utils.py duplicates the same monkey-patch, creating a fragile import-order dependency.",
+        "overlays/vllm/v1/attention/backends/mla/patch_deep_gemm_ops.py uses global _APPLIED to guard one-time patching; quanttrio-tp4-dcp2/legacy-stack/kernels/patch_flashmla_ops.py uses the same global _APPLIED pattern. These are classic import-order-sensitive singletons.",
+        "kernels/nvfp4_ds_mla_writer.py uses global _OP_REGISTERED to register torch.ops.vllm.nvfp4_ds_mla_write once. This works but couples initialization order to the first module import.",
+        "campaign-2026-08/tailquant/codec/mcg_codec.py uses global _LUT for a lookup table, and dspark-training/dspark_finetune.py uses global ROPE for a rope cache, indicating mutable global training state.",
+        "Mechanical scan shows sys_exit_in_library (17 files) and global_keyword (17 files) systemic patterns, indicating module-scope behavior and exit calls that depend on initialization state.",
+        "No import-time DB connections, network calls, or file I/O beyond expected logging setup were found. The fragility is primarily in global singleton guards and monkey-patching rather than expensive side effects."
+      ],
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor",
+      "confidence": "medium",
+      "issues_preventing_higher_score": "The duplicated monkey-patches across overlays and aeon-crossnode-graphs, plus the global _APPLIED/_OP_REGISTERED guards in multiple files, prevent a higher score. A score above 75 would require a centralized patch registry and explicit lazy initialization for expensive state.",
+      "sub_axes": {
+        "import_time_side_effects": 70.0,
+        "global_singleton_ordering": 45.0,
+        "env_var_fragility": 60.0,
+        "monkey_patch_centralization": 40.0,
+        "lazy_initialization": 55.0
+      }
+    }
+  },
+  "dimension_judgment": {
+    "initialization_coupling": {
+      "dimension_character": "The codebase relies heavily on module-level guards, monkey-patches, and global caches. These patterns are typical for vLLM overlay work but create import-order fragility, especially where the same patch logic is duplicated between overlays/ and aeon-crossnode-graphs/.",
+      "score_rationale": "A score of 55.0 reflects moderate-to-high initialization coupling. The main deductions are duplicated monkey-patches, global one-time registration guards, and mutable global caches. The codebase avoids truly dangerous import-time I/O, but it is not easy to reason about boot order."
+    }
+  },
+  "issues": [
+    {
+      "dimension": "initialization_coupling",
+      "identifier": "duplicated_torch_cuda_stream_monkey_patch",
+      "summary": "torch.cuda.set_stream monkey-patch is duplicated in overlays/vllm/utils/torch_utils.py and platform/merged/torch_utils.py",
+      "related_files": [
+        "overlays/vllm/utils/torch_utils.py",
+        "platform/merged/torch_utils.py"
+      ],
+      "evidence": [
+        "Both files contain global _aux_stream and assign torch.cuda.set_stream = _patched_set_stream at module scope. The aeon-crossnode-graphs copy duplicates it again, creating three sources of truth for the same runtime behavior."
+      ],
+      "suggestion": "Centralize the stream patch in a single module (e.g., platform/merged/stream_patch.py) and import it from overlays and platform code. Add a function apply_stream_patch() that launchers call explicitly instead of relying on import side effects.",
+      "confidence": "high",
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor"
+    },
+    {
+      "dimension": "initialization_coupling",
+      "identifier": "global_applied_guards_in_patch_modules",
+      "summary": "Multiple patch modules use global _APPLIED flags to ensure one-time patching",
+      "related_files": [
+        "overlays/vllm/v1/attention/backends/mla/patch_deep_gemm_ops.py",
+        "quanttrio-tp4-dcp2/legacy-stack/kernels/patch_flashmla_ops.py"
+      ],
+      "evidence": [
+        "Both files define global _APPLIED and conditionally patch operators. If import order changes or tests import both modules, the second module may skip needed patches or double-apply depending on guard logic."
+      ],
+      "suggestion": "Replace per-module _APPLIED flags with a centralized patch registry (e.g., a PatchRegistry dataclass) that records which patches are active and provides idempotent apply/reset methods.",
+      "confidence": "medium",
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor"
+    },
+    {
+      "dimension": "initialization_coupling",
+      "identifier": "global_op_registration_in_writer",
+      "summary": "kernels/nvfp4_ds_mla_writer.py uses global _OP_REGISTERED for torch op registration",
+      "related_files": [
+        "kernels/nvfp4_ds_mla_writer.py"
+      ],
+      "evidence": [
+        "global _OP_REGISTERED guards the torch.library.register call. If the module is reloaded in tests or imported in a different process, this global state must be reset, which is not exposed."
+      ],
+      "suggestion": "Encapsulate op registration in a register_nvfp4_ops() function and call it explicitly from launchers/tests. Make the registration idempotent so reloading is safe.",
+      "confidence": "medium",
+      "impact_scope": "module",
+      "fix_scope": "single_edit"
+    },
+    {
+      "dimension": "initialization_coupling",
+      "identifier": "mutable_global_training_state",
+      "summary": "dspark-training/dspark_finetune.py and campaign-2026-08/tailquant/codec/mcg_codec.py use mutable globals",
+      "related_files": [
+        "dspark-training/dspark_finetune.py",
+        "campaign-2026-08/tailquant/codec/mcg_codec.py"
+      ],
+      "evidence": [
+        "dspark_finetune.py uses global ROPE (line 436). mcg_codec.py uses global _LUT (line 122). These globals hold training/codec state that could be passed explicitly or encapsulated in a context object."
+      ],
+      "suggestion": "Replace global ROPE and _LUT with explicit parameters or small state classes passed through the call chain. This makes unit tests deterministic and removes import-order dependencies.",
+      "confidence": "medium",
+      "impact_scope": "module",
+      "fix_scope": "single_edit"
+    }
+  ],
+  "retrospective": {
+    "root_causes": [
+      "Overlay programming often requires runtime patching of upstream libraries, and the natural pattern is a module-level guard flag.",
+      "The consolidation of three repos brought duplicated patching logic without a shared registry."
+    ],
+    "likely_symptoms": [
+      "global _APPLIED",
+      "global _OP_REGISTERED",
+      "monkey-patched torch.cuda.set_stream",
+      "import-order dependent behavior"
+    ],
+    "possible_false_positives": [
+      "logger = init_logger(__name__) at module scope is standard vLLM/ML framework initialization, not a coupling defect.",
+      "vLLM config classes read env vars inside methods or dataclass validators, not necessarily at import time."
+    ]
+  },
+  "context_updates": {
+    "initialization_coupling": {
+      "add": [
+        {
+          "header": "Global patch guards are duplicated across overlay trees",
+          "description": "The same monkey-patches and one-time registration flags appear in overlays/, aeon-crossnode-graphs/, and platform/merged/, making boot order hard to reason about and test reloads fragile.",
+          "settled": true,
+          "positive": false
+        },
+        {
+          "header": "No import-time I/O or DB/network side effects",
+          "description": "Initialization coupling is limited to runtime patches and global caches rather than expensive or dangerous import-time operations, which keeps the risk bounded.",
+          "settled": true,
+          "positive": true
+        }
+      ]
+    }
+  }
+}

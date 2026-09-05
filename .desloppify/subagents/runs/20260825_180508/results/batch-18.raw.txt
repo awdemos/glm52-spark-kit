@@ -1,0 +1,269 @@
+{
+  "batch": "contract_coherence",
+  "batch_index": 18,
+  "assessments": {
+    "contract_coherence": 56.0
+  },
+  "dimension_notes": {
+    "contract_coherence": {
+      "evidence": [
+        "vLLM-style config and backend overlays keep domain-aligned naming and consistent dataclass contracts, but static type coverage is uneven across public helpers.",
+        "systemic_patterns annotation_quality flags 16 files, mostly overlays and legacy-stack code, showing public helpers often lack return or parameter types.",
+        "Multiple concrete docstring/signature divergences found in overlay modules: register_backend omits is_mamba, CUDAGraphCapture.capture omits progress_bar_desc, initialize_model_parallel omits prefill/decode context-parallel sizes, reorg_kvcache omits its first two tensor arguments, LogitsProcessor.__init__ omits four of five constructor parameters, and fused_marlin_moe omits many parameters while documenting a non-existent num_bits parameter.",
+        "Error-contract violations are concentrated in overlay and tooling code: builda_bmm_v1.py, benchmarks/probe.py, spark_graph_status_reporter.py, and marlin_moe_profiler.py swallow exceptions with broad/empty except blocks; b12x_mla_sparse.py _sync_dcp_warmup silently ignores DCP barrier failures.",
+        "State-mutating getter: overlays/dspark-ring/kv_cache_manager.py get_computed_blocks emits BlockStored events under full KV-cache reporting mode despite being named and documented as a lookup.",
+        "overlays/vllm/v1/attention/backends/mla/indexer.py get_max_prefill_buffer_size(vllm_config) lacks a return type annotation, a clear contract gap in a public workspace-size helper.",
+        "overlays/vllm/model_executor/model_loader/weight_utils.py maybe_remap_kv_scale_name normalizes an obsolete checkpoint format but the name under-advertises the conversion contract.",
+        "overlays/vllm/config/speculative.py still accepts a deprecated method alias while warning it is replaced by mtp, creating an ambiguous API surface.",
+        "aeon-crossnode-graphs/ duplicates several of the overlay contract defects (registry.py, parallel_state.py, mla_attention.py, logits_processor.py, marlin_moe.py, b12x_mla_sparse.py), showing the same contract drift propagated to the AEON overlay set.",
+        "No widespread pattern of getX functions mutating state was found beyond get_computed_blocks; global _APPLIED/_OP_REGISTERED guards are initialization side effects, not getter mutations."
+      ],
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor",
+      "confidence": "high",
+      "sub_axes": {
+        "signature_honesty": 55.0,
+        "return_type_coverage": 50.0,
+        "error_contract_clarity": 40.0,
+        "naming_contract_alignment": 65.0,
+        "docstring_accuracy": 50.0
+      }
+    }
+  },
+  "dimension_judgment": {
+    "contract_coherence": {
+      "dimension_character": "The codebase follows vLLM-style naming and config contracts in core overlays, but contract coherence is weakened by widespread docstring/signature divergence, missing return types, swallowed exceptions in both production overlays and tooling, and one getter that mutates external event state. AEON overlay copies propagate the same defects, so the drift is not isolated.",
+      "score_rationale": "A score of 56.0 reflects below-moderate contract coherence. Positives are domain-aligned backend/config naming and generally honest return annotations where present. Negatives are six high-confidence doc/signature mismatches, multiple swallowed-exception sites, a state-mutating getter, annotation gaps, and a deprecated alias that keeps an ambiguous API surface. A score above 75 would require fixing the divergences, adding missing return types, and replacing broad exception swallow with targeted handling or documented fallbacks."
+    }
+  },
+  "issues": [
+    {
+      "dimension": "contract_coherence",
+      "identifier": "register_backend_missing_is_mamba_param_doc",
+      "summary": "register_backend() docstring Args omits the is_mamba parameter that controls which override registry is used.",
+      "related_files": [
+        "overlays/vllm/v1/attention/backends/registry.py",
+        "aeon-crossnode-graphs/overlays/vllm/v1/attention/backends/registry.py"
+      ],
+      "evidence": [
+        "overlays/vllm/v1/attention/backends/registry.py:246-250 signature is `register_backend(backend, class_path=None, is_mamba=False)`",
+        "overlays/vllm/v1/attention/backends/registry.py:253-256 Args block only documents `backend` and `class_path`",
+        "overlays/vllm/v1/attention/backends/registry.py:285 uses `is_mamba` to choose between `_MAMBA_ATTN_OVERRIDES` and `_ATTN_OVERRIDES`"
+      ],
+      "suggestion": "Add `is_mamba` to the Args section and update the example formatting to describe the mamba vs attention registry choice.",
+      "confidence": "high",
+      "impact_scope": "module",
+      "fix_scope": "multi_file_refactor"
+    },
+    {
+      "dimension": "contract_coherence",
+      "identifier": "cudagraph_capture_missing_progress_bar_desc_doc",
+      "summary": "CUDAGraphCapture.capture() docstring Args omits the progress_bar_desc parameter used later in the method.",
+      "related_files": [
+        "overlays/vllm/v1/worker/gpu/cudagraph_utils.py"
+      ],
+      "evidence": [
+        "overlays/vllm/v1/worker/gpu/cudagraph_utils.py:640-644 signature includes `progress_bar_desc: str = \"Capturing CUDA graphs\"`",
+        "overlays/vllm/v1/worker/gpu/cudagraph_utils.py:647-652 Args block only documents `create_forward_fn`",
+        "overlays/vllm/v1/worker/gpu/cudagraph_utils.py:664 uses `progress_bar_desc` in `tqdm(descs, desc=f\"{progress_bar_desc} ({mode.name})\")`"
+      ],
+      "suggestion": "Add `progress_bar_desc` to the Args section of the capture() docstring.",
+      "confidence": "high",
+      "impact_scope": "local",
+      "fix_scope": "single_edit"
+    },
+    {
+      "dimension": "contract_coherence",
+      "identifier": "initialize_model_parallel_missing_context_parallel_doc",
+      "summary": "initialize_model_parallel() docstring Arguments omits the prefill_context_model_parallel_size and decode_context_model_parallel_size parameters present in the signature.",
+      "related_files": [
+        "overlays/vllm/distributed/parallel_state.py",
+        "aeon-crossnode-graphs/overlays/vllm/distributed/parallel_state.py"
+      ],
+      "evidence": [
+        "overlays/vllm/distributed/parallel_state.py:1747-1753 signature lists `tensor_model_parallel_size`, `pipeline_model_parallel_size`, `prefill_context_model_parallel_size`, `decode_context_model_parallel_size`, and `backend`",
+        "overlays/vllm/distributed/parallel_state.py:1757-1762 Arguments block only documents `tensor_model_parallel_size`, `pipeline_model_parallel_size`, and `backend`"
+      ],
+      "suggestion": "Document `prefill_context_model_parallel_size` and `decode_context_model_parallel_size` in the Arguments block.",
+      "confidence": "high",
+      "impact_scope": "module",
+      "fix_scope": "multi_file_refactor"
+    },
+    {
+      "dimension": "contract_coherence",
+      "identifier": "reorg_kvcache_missing_gathered_tensor_doc",
+      "summary": "reorg_kvcache() docstring Args omits its first two positional parameters, the gathered KV tensors it operates on.",
+      "related_files": [
+        "overlays/vllm/model_executor/layers/attention/mla_attention.py",
+        "aeon-crossnode-graphs/overlays/vllm/model_executor/layers/attention/mla_attention.py"
+      ],
+      "evidence": [
+        "overlays/vllm/model_executor/layers/attention/mla_attention.py:2214-2224 signature begins with `allgatered_kv_c_normed: torch.Tensor` and `allgatered_k_pe: torch.Tensor`",
+        "overlays/vllm/model_executor/layers/attention/mla_attention.py:2232-2241 Args block documents only the metadata scalars/lists and not the two tensors"
+      ],
+      "suggestion": "Add `allgatered_kv_c_normed` and `allgatered_k_pe` to the Args section, including their expected shapes.",
+      "confidence": "high",
+      "impact_scope": "local",
+      "fix_scope": "multi_file_refactor"
+    },
+    {
+      "dimension": "contract_coherence",
+      "identifier": "logits_processor_init_missing_constructor_param_doc",
+      "summary": "LogitsProcessor.__init__() docstring Args documents only `scale`, while the constructor has four other public parameters.",
+      "related_files": [
+        "overlays/vllm/model_executor/layers/logits_processor.py",
+        "aeon-crossnode-graphs/overlays/vllm/model_executor/layers/logits_processor.py"
+      ],
+      "evidence": [
+        "overlays/vllm/model_executor/layers/logits_processor.py:154-161 signature includes `vocab_size`, `org_vocab_size`, `scale`, `logits_as_input`, and `soft_cap`",
+        "overlays/vllm/model_executor/layers/logits_processor.py:163-165 Args block only documents `scale`"
+      ],
+      "suggestion": "Expand the Args section to describe `vocab_size`, `org_vocab_size`, `logits_as_input`, and `soft_cap`.",
+      "confidence": "high",
+      "impact_scope": "local",
+      "fix_scope": "multi_file_refactor"
+    },
+    {
+      "dimension": "contract_coherence",
+      "identifier": "fused_marlin_moe_doc_signature_mismatch",
+      "summary": "fused_marlin_moe() docstring omits many real parameters and documents `num_bits`, which is not a function parameter but a local derived variable.",
+      "related_files": [
+        "overlays/vllm/model_executor/layers/fused_moe/experts/marlin_moe.py",
+        "aeon-crossnode-graphs/overlays/vllm/model_executor/layers/fused_moe/experts/marlin_moe.py"
+      ],
+      "evidence": [
+        "overlays/vllm/model_executor/layers/fused_moe/experts/marlin_moe.py:234-272 signature has ~38 parameters including `bias1`, `bias2`, `quant_type_id`, `apply_router_weight_on_input`, `activation`, `activation_func`, `moe_sum`, `expert_map`, and input/global/scale/output/cache/dtype/clamp/alpha/beta parameters",
+        "overlays/vllm/model_executor/layers/fused_moe/experts/marlin_moe.py:277-293 Parameters block documents only hidden_states, w1, w2, scales, g_idx/sort/topk/zero params, and `num_bits`",
+        "overlays/vllm/model_executor/layers/fused_moe/experts/marlin_moe.py:293 lists `num_bits (bool): The number of bits in expert weights quantization`, but `num_bits` is computed at line 313, not a parameter"
+      ],
+      "suggestion": "Rewrite the Parameters block to match the signature exactly and remove the `num_bits` entry.",
+      "confidence": "high",
+      "impact_scope": "local",
+      "fix_scope": "multi_file_refactor"
+    },
+    {
+      "dimension": "contract_coherence",
+      "identifier": "b12x_mla_sparse_sync_dcp_warmup_swallows_barrier_failures",
+      "summary": "B12xMLASparseImpl._sync_dcp_warmup() silently swallows all exceptions from the DCP group barrier, hiding cross-rank synchronization failures.",
+      "related_files": [
+        "overlays/vllm/v1/attention/backends/mla/b12x_mla_sparse.py",
+        "aeon-crossnode-graphs/overlays/vllm/v1/attention/backends/mla/b12x_mla_sparse.py"
+      ],
+      "evidence": [
+        "overlays/vllm/v1/attention/backends/mla/b12x_mla_sparse.py:752-766 wraps `dcp_group.barrier()` in `try/except Exception: return`",
+        "overlays/vllm/v1/attention/backends/mla/b12x_mla_sparse.py:763 contains a bare `return` inside the except block with no logging or re-raise"
+      ],
+      "suggestion": "Catch specific torch.distributed exceptions, log the failure, and re-raise; if intentional fallback is required, document the silent swallow in a docstring or comment.",
+      "confidence": "high",
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor"
+    },
+    {
+      "dimension": "contract_coherence",
+      "identifier": "kv_cache_manager_get_computed_blocks_emits_events",
+      "summary": "KVCacheManager.get_computed_blocks() is named and documented as a lookup but mutates external state by emitting BlockStored events under full KV-cache reporting mode.",
+      "related_files": [
+        "overlays/dspark-ring/kv_cache_manager.py"
+      ],
+      "evidence": [
+        "overlays/dspark-ring/kv_cache_manager.py:249-265 docstring says \"Get the computed (cached) blocks for the request\" and describes only the returned tuple",
+        "overlays/dspark-ring/kv_cache_manager.py:289-307 conditionally calls `self.block_pool.emit_cached_block_events(request, num_blocks, block_size, group_idx)` for each non-empty group"
+      ],
+      "suggestion": "Rename the method to `compute_and_emit_cached_blocks` or add a side-effect note to the docstring; alternatively move event emission to a separate caller-visible method.",
+      "confidence": "high",
+      "impact_scope": "local",
+      "fix_scope": "single_edit"
+    },
+    {
+      "dimension": "contract_coherence",
+      "identifier": "swallowed_exceptions_in_bmm_probe_reporter_profiler",
+      "summary": "builda_bmm_v1.py, benchmarks/probe.py, spark_graph_status_reporter.py, and marlin_moe_profiler.py swallow exceptions with broad/empty except blocks.",
+      "related_files": [
+        "overlays/vllm/model_executor/layers/attention/builda_bmm_v1.py",
+        "campaign-2026-08/benchmarks/probe.py",
+        "campaign-2026-08/sircl/upstream/integrations/vllm/spark_graph_status_reporter.py",
+        "overlays/optional/tailquant/marlin_moe_profiler.py"
+      ],
+      "evidence": [
+        "error_hotspots: builda_bmm_v1.py has broad_except=1, empty_except=1, silent_except=1. Lines 87-96 wrap the custom op registration in `except Exception: pass`.",
+        "campaign-2026-08/benchmarks/probe.py lines 126 and 198 use bare `except Exception` and either continue or emit partial results, violating the implicit contract that benchmark failures are visible.",
+        "campaign-2026-08/sircl/upstream/integrations/vllm/spark_graph_status_reporter.py error_hotspots show broad_except=1, empty_except=1, silent_except=1; `_run()` lines 87-90 pass on every `Exception`, so graph-status publishing failures are invisible.",
+        "overlays/optional/tailquant/marlin_moe_profiler.py error_hotspots show broad_except=1, empty_except=1, silent_except=1; lines 87 and 106 use `except Exception: pass` around the histogram increment and atexit dump, so profiling data loss is not reported."
+      ],
+      "suggestion": "Replace empty/broad except blocks with targeted exceptions and explicit logging. If a fallback is intentional, log a warning and document the fallback in a comment or docstring.",
+      "confidence": "high",
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor"
+    },
+    {
+      "dimension": "contract_coherence",
+      "identifier": "annotation_gaps_in_overlay_modules",
+      "summary": "Public helpers across overlay modules lack return types or parameter types, weakening the static contract.",
+      "related_files": [
+        "aeon-crossnode-graphs/overlays/b12x/attention/indexer/tiled_topk.py",
+        "aeon-crossnode-graphs/overlays/vllm/distributed/device_communicators/shm_broadcast.py",
+        "overlays/vllm/model_executor/layers/attention/mla_attention.py",
+        "overlays/vllm/v1/attention/backends/mla/indexer.py"
+      ],
+      "evidence": [
+        "systemic_patterns annotation_quality lists 16 files with incomplete type coverage.",
+        "overlays/vllm/v1/attention/backends/mla/indexer.py:519 defines `def get_max_prefill_buffer_size(vllm_config: VllmConfig):` with no `-> int` annotation, despite returning `max_model_len * 40`.",
+        "aeon-crossnode-graphs/overlays/vllm/distributed/device_communicators/shm_broadcast.py exposes `get_data(self, current_idx: int)` and `get_metadata(self, current_idx: int)` as @contextmanager methods without return type annotations."
+      ],
+      "suggestion": "Add type annotations to public helper functions in the flagged files, starting with parameters and return types that cross module boundaries.",
+      "confidence": "medium",
+      "impact_scope": "subsystem",
+      "fix_scope": "multi_file_refactor"
+    }
+  ],
+  "retrospective": {
+    "root_causes": [
+      "Overlay code must mirror upstream vLLM signatures, which discourages wholesale contract redesign and lets docstring drift accumulate when new parameters are added locally.",
+      "Fast bring-up favors defensive try/except blocks that swallow errors rather than propagating or logging them.",
+      "Research tooling and optional probes prioritize not crashing the main process over surfacing every failure, eroding error contracts.",
+      "AEON overlay copies duplicate the same contract defects, indicating the overlay merge process does not enforce doc/type parity."
+    ],
+    "likely_symptoms": [
+      "broad/empty except blocks",
+      "annotation_quality flags",
+      "docstring/signature divergence",
+      "deprecated format remaps inside loaders",
+      "deprecated method aliases",
+      "background-thread failures passing silently",
+      "state-mutating getters"
+    ],
+    "possible_false_positives": [
+      "Abstract methods and vLLM base-class stubs are intentionally placeholder contracts.",
+      "Test helpers intentionally have loose typing.",
+      "Custom-op registration fallback in builda_bmm_v1.py may be intentionally defensive, but it should still log.",
+      "The get_kv_quant_mode mapping of nvfp4_ds_mla to FP8_PER_TENSOR is a deliberate internal workaround documented in a code comment, not a contract breach."
+    ]
+  },
+  "context_updates": {
+    "contract_coherence": {
+      "add": [
+        {
+          "header": "Docstring/signature divergence is the dominant defect class",
+          "description": "Six independent overlay functions have Args blocks that omit real parameters or document variables that are not parameters. AEON copies repeat the same drift, so this is a systemic overlay-merge issue rather than one-off typos.",
+          "settled": true,
+          "positive": false
+        },
+        {
+          "header": "Exception swallowing breaks the implicit error contract",
+          "description": "Broad or empty except blocks in builda_bmm_v1, probe harness, status reporter, marlin_moe_profiler, and b12x_mla_sparse barrier warmup make failures invisible. This is a recurring pattern across production overlays and research tooling.",
+          "settled": true,
+          "positive": false
+        },
+        {
+          "header": "AEON overlay set propagates the same contract drift",
+          "description": "Five of the doc/signature mismatches and the DCP barrier swallow are duplicated in aeon-crossnode-graphs/overlays/vllm/*. The contract defects are therefore not isolated to one overlay set and need cross-set fixes.",
+          "settled": true,
+          "positive": false
+        }
+      ],
+      "remove": [
+        "No widespread pattern of getX functions mutating state was found; global _APPLIED/_OP_REGISTERED guards are initialization side effects, not getter mutations."
+      ]
+    }
+  }
+}
