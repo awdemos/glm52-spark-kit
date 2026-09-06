@@ -1,13 +1,16 @@
 import sys
-p=sys.argv[1]; s=open(p).read()
-old = '''    if os.environ.get("VLLM_ONE_GPU_PER_NODE", "0") == "1":
+
+
+def main():
+    p = sys.argv[1]; s = open(p).read()
+    old = '''    if os.environ.get("VLLM_ONE_GPU_PER_NODE", "0") == "1":
         if isinstance(pg, ProcessGroup):
             world_size = torch.distributed.get_world_size(group=pg)
         else:
             world_size = pg.world_size
         return [i == source_rank for i in range(world_size)]
 '''
-new = '''    if os.environ.get("VLLM_ONE_GPU_PER_NODE", "0") == "1":
+    new = '''    if os.environ.get("VLLM_ONE_GPU_PER_NODE", "0") == "1":
         if isinstance(pg, ProcessGroup):
             world_size = torch.distributed.get_world_size(group=pg)
             _rk = torch.distributed.get_rank(group=pg)
@@ -22,4 +25,8 @@ new = '''    if os.environ.get("VLLM_ONE_GPU_PER_NODE", "0") == "1":
                     _rk, world_size, source_rank, _t.time())
         return [i == source_rank for i in range(world_size)]
 '''
-assert s.count(old)==1; open(p,"w").write(s.replace(old,new,1)); print("gloo probe added")
+    assert s.count(old) == 1; open(p, "w").write(s.replace(old, new, 1)); print("gloo probe added")
+
+
+if __name__ == "__main__":
+    main()

@@ -14,7 +14,7 @@ import argparse, time, torch
 import cutlass, cutlass.cute as cute
 import cuda.bindings.driver as cuda
 from cutlass.cute.runtime import from_dlpack
-from cutlass import Int32, Int64, Float32, BFloat16
+from cutlass import Int32, Int64, Float32
 
 MAXM = 4    # compile-time token tile; the harness compiles per M bucket (4/8/16)
 LANES = 32

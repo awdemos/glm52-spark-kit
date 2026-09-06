@@ -194,7 +194,7 @@ def probe_prefill(target_tokens, timeout):
     prompt = f"[cold prefill {nonce()}] " + unit * reps + "\nIn one sentence: what did the ledgers record?"
     m0 = metrics(); t0 = time.time()
     try:
-        r = chat(prompt, 32, timeout=timeout)
+        chat(prompt, 32, timeout=timeout)
     except Exception as e:
         return {"probe": "prefill", "gate": "FAIL", "error": str(e)[:200]}
     t1 = time.time(); m1 = metrics()

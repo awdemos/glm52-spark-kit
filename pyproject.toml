@@ -1,0 +1,14 @@
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = [
+    "--ignore=tests/test_dcp_topk_pack_identity.py",
+    "--ignore=tests/test_nvfp4_writer_identity.py",
+    "--ignore=tests/test_nvfp4_writer_opcheck.py",
+]
+markers = [
+    "gpu: tests that require a CUDA GPU and the vllm runtime environment",
+]

@@ -1,6 +1,6 @@
 # Time vLLM's Marlin W8A16 (compressed-tensors int8 g128) on the same o_proj weight at M=3.
 import torch, time, sys
-from vllm.model_executor.layers.quantization.utils.marlin_utils import (marlin_permute_scales, marlin_make_workspace_new, marlin_make_empty_g_idx, marlin_sort_g_idx)
+from vllm.model_executor.layers.quantization.utils.marlin_utils import (marlin_permute_scales, marlin_make_workspace_new, marlin_make_empty_g_idx)
 from vllm.scalar_type import scalar_types
 import vllm._custom_ops as ops
 dev="cuda"

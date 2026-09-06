@@ -46,9 +46,11 @@ def mem_available_bytes():
 
 avail = mem_available_bytes()
 if avail is None:
-    sys.exit("FAIL-CLOSED: cannot determine available memory")
+    print("FAIL-CLOSED: cannot determine available memory", file=sys.stderr)
+    sys.exit(1)
 if avail < MIN_FREE_BYTES:
-    sys.exit(f"FAIL-CLOSED: {avail / 2**30:.2f} GiB < floor")
+    print(f"FAIL-CLOSED: {avail / 2**30:.2f} GiB < floor", file=sys.stderr)
+    sys.exit(1)
 
 import torch  # noqa: E402
 from mcg_codec import mcg_decode_w16  # noqa: E402
@@ -88,6 +90,5 @@ if __name__ == "__main__":
     torch.manual_seed(int(os.environ.get("CODEC_SEED", "7")))
     tgt = (torch.randn(256) * 2.0).clamp(-3.5, 3.5)
     ring = torch.zeros(TOTAL, dtype=torch.int64)
-    t0 = os.times()
     encode_tile_vec(ring, tgt)
     print("[ok] tile encoded; wire it into roundtrip.matrix_roundtrip for batches")
